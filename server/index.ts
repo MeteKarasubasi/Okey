@@ -1,5 +1,4 @@
 import 'dotenv/config';
-import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
 import { botTurn, collectMelds, discard, draw, extendMeld, newGame, openMelds, rearrangeTable, scores, timeoutTurn, type Game, type Meld, type Mode, type Tile } from '../src/game/engine';
@@ -30,7 +29,7 @@ const allowedOrigins = new Set((process.env.GAME_ALLOWED_ORIGINS ?? '').split(',
 const connectionAttempts = new Map<string, number[]>();
 if (production && !process.env.SUPABASE_SERVICE_ROLE_KEY) throw new Error('Production WebSocket server requires SUPABASE_SERVICE_ROLE_KEY.');
 
-function roomId() { return randomBytes(6).toString('hex').toUpperCase(); }
+function roomId() { return globalThis.crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase(); }
 function send(ws: WebSocket, message: Record<string, unknown>) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message)); }
 function fail(ws: WebSocket, message: string) { send(ws, { type: 'error', message }); }
 function playersFor(room: Room) { return [...room.players.values()].map(player => ({ seat: player.seat })); }

@@ -29,7 +29,10 @@ export async function connectGameServer(options: ConnectOptions): Promise<GameCo
     return null;
   }
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(gameServerUrl);
+    const endpoint = new URL(gameServerUrl);
+    endpoint.pathname = options.roomId ? `/room/${options.roomId}` : '/new';
+    endpoint.search = '';
+    const socket = new WebSocket(endpoint.toString());
     let connection: GameConnection | null = null;
     let settled = false;
     const fail = (message: string) => {

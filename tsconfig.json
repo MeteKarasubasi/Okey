@@ -1,5 +1,5 @@
 {
   "extends": "expo/tsconfig.base",
-  "compilerOptions": { "strict": true, "noEmit": true, "types": ["node", "react"] },
+  "compilerOptions": { "strict": true, "noEmit": true, "types": ["node", "react", "@cloudflare/workers-types"] },
   "include": ["**/*.ts", "**/*.tsx"]
 }

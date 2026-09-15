@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "keyif-101-realtime",
+  "main": "cloudflare/index.ts",
+  "compatibility_date": "2026-09-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOMS", "class_name": "RoomDurableObject" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RoomDurableObject"] }
+  ],
+  "vars": {
+    "GAME_WS_AUTH_REQUIRED": "true",
+    "ENVIRONMENT": "production"
+  },
+  "observability": { "enabled": true }
+}
