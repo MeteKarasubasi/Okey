@@ -41,3 +41,12 @@ test('uses remaining left space for a smaller meld even after a larger meld need
   assert.deepEqual(slots[13], { row: 0, column: 22, length: 4 });
   assert.deepEqual(slots[14], { row: 0, column: 0, length: 2 });
 });
+
+test('anchored melds begin at their first number and use one meld per row', () => {
+  assert.deepEqual(layoutMelds([{ length: 5, start: 9 }, { length: 3, start: 3 }]), [
+    { row: 0, column: 8, length: 5 },
+    { row: 1, column: 2, length: 3 },
+  ]);
+  assert.deepEqual(layoutMelds(Array.from({ length: 14 }, () => ({ length: 3, start: 1 }))).at(13), { row: 0, column: 13, length: 3 });
+  assert.deepEqual(layoutMelds([{ length: 3, start: 13, kind: 'set' }]), [{ row: 0, column: 10, length: 3 }]);
+});

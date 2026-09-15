@@ -6,8 +6,7 @@
   "scripts": {
     "start": "expo start",
     "web": "expo start --web --port 8081",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "server": "tsx server/index.ts",
     "build": "expo export --platform web",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test src/game/engine.test.ts"
@@ -20,7 +19,6 @@
     "@supabase/supabase-js": "^2.116.0",
     "expo": "~57.0.22",
     "expo-font": "~57.0.4",
-    "expo-haptics": "~57.0.3",
     "expo-linear-gradient": "~57.0.2",
     "expo-status-bar": "~57.0.1",
     "lucide-react-native": "^1.46.0",
@@ -29,11 +27,13 @@
     "react-native": "0.86.3",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-svg": "15.15.4",
-    "react-native-web": "~0.21.0"
+    "react-native-web": "~0.21.0",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/node": "^26.5.1",
     "@types/react": "~19.2.2",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.20.0",
     "typescript": "~6.0.0"
   }

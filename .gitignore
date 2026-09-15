@@ -1,6 +1,9 @@
 node_modules/
 .expo/
 dist/
+supabase/.temp/
 .DS_Store
 *.tsbuildinfo
 artifacts/
+.env*
+!.env.example

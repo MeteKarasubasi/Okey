@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { Animated, PanResponder, Platform, StyleSheet, View } from 'react-native';
+import { Animated, PanResponder, StyleSheet, View } from 'react-native';
 import { Tile, isJoker } from '../game/engine';
 import { OkeyTile } from './UI';
 import { Point } from '../game/rackLayout';
@@ -71,7 +71,7 @@ export function DrawTile({ tile, indicator, source, scale, disabled, reducedMoti
   }), []);
 
   return <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
-    <View {...responder.panHandlers} testID="draw-pile-hit" style={[styles.hit, { left: source.x - 10, top: source.y - 10, width: source.width + 20, height: source.height + 20 }, Platform.OS === 'web' && { cursor: held ? 'grabbing' : 'grab', touchAction: 'none' } as any]} />
+    <View {...responder.panHandlers} testID="draw-pile-hit" style={[styles.hit, { left: source.x - 10, top: source.y - 10, width: source.width + 20, height: source.height + 20 }, { cursor: held ? 'grabbing' : 'grab', touchAction: 'none' } as any]} />
     {held && tile && <Animated.View pointerEvents="none" style={[styles.floating, { width: source.width, height: source.height, transform: [...position.getTranslateTransform(), { translateY: lift.interpolate({ inputRange: [0, 1], outputRange: [0, -24] }) }, { scale: lift.interpolate({ inputRange: [0, 1], outputRange: [1, 1.14] }) }, { rotate: lift.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '-3deg'] }) }] }]}>
       <OkeyTile tile={tile} size={source.width} height={source.height} joker={isJoker(tile, indicator)} />
     </Animated.View>}
@@ -80,5 +80,5 @@ export function DrawTile({ tile, indicator, source, scale, disabled, reducedMoti
 
 const styles = StyleSheet.create({
   hit: { position: 'absolute', zIndex: 41 },
-  floating: { position: 'absolute', zIndex: 42, ...Platform.select({ web: { boxShadow: '10px 24px 24px rgba(8,18,25,.52)', borderRadius: 7 }, default: { shadowColor: '#000', shadowOffset: { width: 8, height: 22 }, shadowOpacity: .48, shadowRadius: 15 } }) },
+  floating: { position: 'absolute', zIndex: 42, boxShadow: '10px 24px 24px rgba(8,18,25,.52)', borderRadius: 7 },
 });

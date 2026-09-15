@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { ArrowRight, Eye, EyeOff, LockKeyhole, Mail, UserRound } from 'lucide-react-native';
 import { C, F, elevation } from '../theme';
 import { Button, Logo } from '../components/UI';
@@ -26,7 +26,7 @@ export default function AuthScreen({ auth }: { auth: Auth }) {
     if (result.error) return;
     if (mode === 'signup' && 'data' in result && !result.data.session) setNotice('Hesabın oluşturuldu. E-postandaki doğrulama bağlantısından sonra giriş yapabilirsin.');
   };
-  return <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.page}>
+  return <View style={s.page}>
     <View style={s.glow} /><View style={s.card}>
       <Logo small /><Text style={s.eyebrow}>KEYİF KULÜBÜ</Text><Text style={s.title}>{mode === 'signin' ? 'Masana dön.' : 'Aramıza katıl.'}</Text>
       <Text style={s.copy}>{mode === 'signin' ? 'Oyunlarını, istatistiklerini ve ayarlarını her cihazda yanında taşı.' : 'Profilini oluştur, ilerlemeni ve oyun istatistiklerini güvenle sakla.'}</Text>
@@ -37,7 +37,7 @@ export default function AuthScreen({ auth }: { auth: Auth }) {
       <Button disabled={busy} onPress={submit} icon={<ArrowRight size={18} color={C.ink} />}>{busy ? 'Bekle…' : mode === 'signin' ? 'Giriş yap' : 'Hesap oluştur'}</Button>
       <Pressable accessibilityRole="button" onPress={() => { setMode(mode === 'signin' ? 'signup' : 'signin'); setNotice(''); auth.setError(''); }} style={s.switch}><Text style={s.switchText}>{mode === 'signin' ? 'Hesabın yok mu? ' : 'Zaten hesabın var mı? '}<Text style={{ color: C.green }}>{mode === 'signin' ? 'Kayıt ol' : 'Giriş yap'}</Text></Text></Pressable>
     </View><Text style={s.privacy}>Verilerin hesabına bağlı tutulur ve cihazlar arasında senkronize edilir.</Text>
-  </KeyboardAvoidingView>;
+  </View>;
 }
 function Field({ icon, ...props }: { icon: React.ReactNode } & React.ComponentProps<typeof TextInput>) {
   return <View style={s.field}>{icon}<TextInput {...props} placeholderTextColor={C.muted} style={s.input} /></View>;

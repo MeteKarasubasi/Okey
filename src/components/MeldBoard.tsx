@@ -1,18 +1,66 @@
-import React, { useMemo, useState } from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, View, Text, StyleSheet, PanResponder } from 'react-native';
 import Svg, { Line } from 'react-native-svg';
-import { Meld, Tile, NAMES, isJoker } from '../game/engine';
+import { Meld, Tile, face, isJoker } from '../game/engine';
 import { BOARD_ROWS, BOARD_COLUMNS, SECTION_COLUMNS, layoutMelds } from '../game/boardLayout';
 import { OkeyTile } from './UI';
 import { F } from '../theme';
 
-export function MeldBoard({ melds, indicator, onMeldPress }: {
-  melds: Meld[]; indicator: Tile; onMeldPress: (index: number) => void;
+type MeldDrop = { row: number; column: number };
+type PieceProps = { meld: Meld; index: number; indicator: Tile; cellWidth: number; cellHeight: number; slot: { row: number; column: number; length: number }; offset: Animated.ValueXY; enter: Animated.Value; editable: boolean; onMeldPress: (index: number) => void; onMeldDrop?: (index: number, drop: MeldDrop) => void };
+function MeldPiece({ meld, index, indicator, cellWidth, cellHeight, slot, offset, enter, editable, onMeldPress, onMeldDrop }: PieceProps) {
+  const drag = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const active = useRef(false);
+  const responder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => editable,
+    onPanResponderGrant: () => { active.current = true; offset.stopAnimation(); drag.setValue({ x: 0, y: 0 }); },
+    onPanResponderMove: (_, gesture) => drag.setValue({ x: gesture.dx, y: gesture.dy }),
+    onPanResponderRelease: (_, gesture) => {
+      active.current = false;
+      const moved = Math.hypot(gesture.dx, gesture.dy) > 6;
+      if (!moved) onMeldPress(index);
+      else if (onMeldDrop) {
+        const centerX = slot.column * cellWidth + slot.length * cellWidth / 2 + gesture.dx;
+        const centerY = slot.row * cellHeight + cellHeight / 2 + gesture.dy;
+        onMeldDrop(index, { row: Math.max(0, Math.min(12, Math.floor(centerY / cellHeight))), column: Math.max(0, Math.min(25, Math.floor(centerX / cellWidth))) });
+      }
+      Animated.spring(drag, { toValue: { x: 0, y: 0 }, stiffness: 300, damping: 25, mass: .7, useNativeDriver: true }).start();
+    },
+    onPanResponderTerminate: () => { active.current = false; Animated.spring(drag, { toValue: { x: 0, y: 0 }, useNativeDriver: true }).start(); },
+    onPanResponderTerminationRequest: () => false,
+  }), [cellWidth, cellHeight, editable, index, meld, onMeldDrop, onMeldPress, offset, slot]);
+  return <Animated.View {...responder.panHandlers} testID={`board-meld-${index}`} accessibilityRole="button" accessibilityLabel={`${meld.tiles.length} taşlı per${editable ? ', sürükleyerek yeniden düzenle' : ''}`} style={{ position: 'absolute', width: slot.length * cellWidth, height: cellHeight, opacity: enter, zIndex: active.current ? 8 : 1, transform: [...offset.getTranslateTransform(), ...drag.getTranslateTransform(), { translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [-22, 0] }) }, { scale: enter.interpolate({ inputRange: [0, 1], outputRange: [.96, 1] }) }] }}>
+    <View style={{ width: slot.length * cellWidth, height: cellHeight }}>
+      {meld.tiles.map((tile, tileIndex) => <View key={tile.id} testID={`board-tile-${tile.id}`} style={{ position: 'absolute', left: tileIndex * cellWidth, top: 0, width: cellWidth, height: cellHeight }}><OkeyTile tile={tile} size={cellWidth} height={cellHeight} joker={isJoker(tile, indicator)} /></View>)}
+    </View>
+  </Animated.View>;
+}
+
+export function MeldBoard({ melds, indicator, onMeldPress, editable = false, onMeldDrop }: {
+  melds: Meld[]; indicator: Tile; onMeldPress: (index: number) => void; editable?: boolean; onMeldDrop?: (index: number, drop: MeldDrop) => void;
 }) {
   const [bounds, setBounds] = useState({ width: 0, height: 0 });
-  const positions = useMemo(() => layoutMelds(melds.map(m => m.tiles.length)), [melds]);
+  const positions = useMemo(() => layoutMelds(melds.map(m => ({ length: m.tiles.length, start: face(m.tiles[0], indicator).value, kind: m.kind }))), [melds, indicator]);
   const cellWidth = bounds.width / BOARD_COLUMNS;
   const cellHeight = bounds.height / BOARD_ROWS;
+  const offsets = useRef(new Map<string, Animated.ValueXY>());
+  const enters = useRef(new Map<string, Animated.Value>());
+  const previousKeys = useRef(new Set<string>());
+  useEffect(() => {
+    if (!cellWidth || !cellHeight) return;
+    const entering: Animated.Value[] = [];
+    melds.forEach((meld, index) => {
+      const key = meld.tiles.map(tile => tile.id).join('|');
+      const target = { x: positions[index].column * cellWidth, y: positions[index].row * cellHeight };
+      const offset = offsets.current.get(key);
+      if (!offset) offsets.current.set(key, new Animated.ValueXY(target));
+      else Animated.spring(offset, { toValue: target, stiffness: 280, damping: 27, mass: .8, useNativeDriver: true }).start();
+      const enter = enters.current.get(key);
+      if (enter && !previousKeys.current.has(key)) entering.push(enter);
+    });
+    previousKeys.current = new Set(melds.map(meld => meld.tiles.map(tile => tile.id).join('|')));
+    entering.forEach(enter => Animated.spring(enter, { toValue: 1, stiffness: 260, damping: 24, mass: .75, useNativeDriver: true }).start());
+  }, [melds, positions, cellWidth, cellHeight]);
   return <View style={styles.frame}>
     <View testID="meld-grid" style={styles.surface} onLayout={({ nativeEvent: { layout } }) => {
       setBounds(current => current.width === layout.width && current.height === layout.height
@@ -28,11 +76,12 @@ export function MeldBoard({ melds, indicator, onMeldPress }: {
         </Svg>
         {melds.map((meld, index) => {
           const slot = positions[index];
-          return <Pressable key={meld.tiles.map(t => t.id).join('|')} testID={`board-meld-${index}`} accessibilityRole="button" accessibilityLabel={`${NAMES[meld.owner]} perine taşı işle`} onPress={() => onMeldPress(index)} style={{ position: 'absolute', left: slot.column * cellWidth, top: slot.row * cellHeight, width: slot.length * cellWidth, height: cellHeight }}>
-            {meld.tiles.map((tile, tileIndex) => <View key={tile.id} testID={`board-tile-${tile.id}`} style={{ position: 'absolute', left: tileIndex * cellWidth, top: 0, width: cellWidth, height: cellHeight }}>
-              <OkeyTile tile={tile} size={cellWidth} height={cellHeight} joker={isJoker(tile, indicator)} />
-            </View>)}
-          </Pressable>;
+          const key = meld.tiles.map(t => t.id).join('|');
+          const offset = offsets.current.get(key) ?? new Animated.ValueXY({ x: slot.column * cellWidth, y: slot.row * cellHeight });
+          offsets.current.set(key, offset);
+          let enter = enters.current.get(key);
+          if (!enter) { enter = new Animated.Value(0); enters.current.set(key, enter); }
+          return <MeldPiece key={key} meld={meld} index={index} indicator={indicator} cellWidth={cellWidth} cellHeight={cellHeight} slot={slot} offset={offset} enter={enter} editable={editable} onMeldPress={onMeldPress} onMeldDrop={onMeldDrop} />;
         })}
       </>}
     </View>

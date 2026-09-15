@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, PanResponder, Platform, StyleSheet, Text, View } from 'react-native';
+import { Animated, PanResponder, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path } from 'react-native-svg';
 import { Tile, COLOR_NAMES, isJoker } from '../game/engine';
@@ -73,7 +73,7 @@ function RackPiece(props: PieceProps) {
       { scale: lift.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] }) },
       { scale: shrink },
       { rotate: lift.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '-3deg'] }) }] },
-      Platform.OS === 'web' && { cursor: held ? 'grabbing' : 'grab', touchAction: 'none', userSelect: 'none' } as any,
+      { cursor: held ? 'grabbing' : 'grab', touchAction: 'none', userSelect: 'none' } as any,
       held && styles.floating]}>
     <View pointerEvents="none"><OkeyTile tile={props.tile} size={RACK.tileWidth} height={RACK.tileHeight} joker={isJoker(props.tile, props.indicator)} /></View>
   </Animated.View>;
@@ -119,7 +119,7 @@ const styles = StyleSheet.create({
   brand: { position: 'absolute', left: 550, top: 40, alignItems: 'center', opacity: .25, transform: [{ rotate: '-4deg' }] },
   brandTitle: { fontFamily: F.extra, fontSize: 47, color: '#663800', letterSpacing: 7 }, brandSub: { fontFamily: F.bold, fontSize: 13, color: '#663800', letterSpacing: 8 },
   piece: { position: 'absolute', left: 0, top: 0, width: RACK.tileWidth, height: RACK.tileHeight },
-  floating: { ...Platform.select({ web: { boxShadow: '10px 24px 24px rgba(13,20,25,.48)', borderRadius: 6 }, default: { shadowColor: '#000', shadowOffset: { width: 8, height: 22 }, shadowOpacity: .45, shadowRadius: 15 } }) },
+  floating: { boxShadow: '10px 24px 24px rgba(13,20,25,.48)', borderRadius: 6 },
   placeholder: { position: 'absolute', width: RACK.tileWidth, height: RACK.tileHeight, backgroundColor: '#69380038', borderRadius: 5, borderWidth: 1, borderColor: '#6f42033b' },
   preview: { position: 'absolute', width: RACK.tileWidth, height: RACK.tileHeight, backgroundColor: '#fff7c94a', borderRadius: 6, borderWidth: 2, borderColor: '#fff1a0', zIndex: 3 },
 });
