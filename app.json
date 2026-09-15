@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "Keyif 101",
+    "slug": "keyif-101",
+    "version": "1.0.0",
+    "orientation": "landscape",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#102e29",
+    "ios": { "supportsTablet": true, "bundleIdentifier": "com.keyif.okey101" },
+    "android": { "package": "com.keyif.okey101" },
+    "web": { "bundler": "metro", "name": "Keyif 101 · Bir el daha?", "shortName": "Keyif 101", "themeColor": "#102e29" }
+  }
+}
