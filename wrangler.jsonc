@@ -14,7 +14,8 @@
   ],
   "vars": {
     "GAME_WS_AUTH_REQUIRED": "true",
-    "ENVIRONMENT": "production"
+    "ENVIRONMENT": "production",
+    "GAME_ALLOWED_ORIGINS": "http://localhost:8081"
   },
   "observability": { "enabled": true }
 }
