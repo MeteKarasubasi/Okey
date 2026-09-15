@@ -1,10 +1,11 @@
 import type { Game, Mode } from './engine';
 
-type ServerState = { type: 'state'; roomId: string; seat: number; players: { seat: number; userId: string }[]; game: Game };
+type ServerState = { type: 'state'; roomId: string; seat: number; players: { seat: number }[]; game: Game; scoreSnapshot: number[] };
 type ServerReady = { type: 'ready'; roomId: string; seat: number };
 type ConnectOptions = {
   mode: Mode;
   userId?: string;
+  accessToken?: string;
   roomId?: string;
   onReady: (ready: ServerReady) => void;
   onState: (state: ServerState) => void;
@@ -23,6 +24,10 @@ export class GameConnection {
 
 export async function connectGameServer(options: ConnectOptions): Promise<GameConnection | null> {
   if (!gameServerUrl || typeof WebSocket === 'undefined') return null;
+  if (process.env.NODE_ENV === 'production' && !gameServerUrl.startsWith('wss://')) {
+    options.onError?.('Canlı ortamda güvenli WSS bağlantısı gerekli.');
+    return null;
+  }
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(gameServerUrl);
     let connection: GameConnection | null = null;
@@ -30,7 +35,7 @@ export async function connectGameServer(options: ConnectOptions): Promise<GameCo
     const fail = (message: string) => {
       if (!settled) { settled = true; options.onError?.(message); reject(new Error(message)); }
     };
-    socket.onopen = () => socket.send(JSON.stringify({ type: options.roomId ? 'join' : 'create', roomId: options.roomId, mode: options.mode, userId: options.userId }));
+    socket.onopen = () => socket.send(JSON.stringify({ type: options.roomId ? 'join' : 'create', roomId: options.roomId, mode: options.mode, userId: options.userId, accessToken: options.accessToken }));
     socket.onmessage = event => {
       let message: ServerReady | ServerState | { type: 'error'; message: string };
       try { message = JSON.parse(String(event.data)); } catch { return fail('Canlı sunucudan geçersiz cevap alındı.'); }

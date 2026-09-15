@@ -11,7 +11,7 @@ import Lobby, { Page, Room, ROOMS } from './src/screens/Lobby';
 import GameScreen from './src/screens/GameScreen';
 import AuthScreen from './src/screens/AuthScreen';
 import { Game, Mode, newGame, scores } from './src/game/engine';
-import { Profile, todayKey, useProfile } from './src/storage';
+import { claimDailyBonus, Profile, todayKey, useProfile } from './src/storage';
 import { useAuth } from './src/auth';
 import { supabaseConfigured } from './src/supabase';
 import { appendGameAction, createGameSession, finishGameSession, saveRoundResult } from './src/game/online';
@@ -40,6 +40,7 @@ export default function App() {
   const [onlineSeat, setOnlineSeat] = useState<number | null>(null);
   const [onlineRoomId, setOnlineRoomId] = useState<string | undefined>();
   const [onlineActive, setOnlineActive] = useState(false);
+  const [remoteRoundScores, setRemoteRoundScores] = useState<number[] | null>(null);
   const onlineRef = useRef<GameConnection | null>(null);
   const recorded = useRef(false);
   const update = (patch: Partial<Profile>) => setProfile(current => ({ ...current, ...patch }));
@@ -48,7 +49,7 @@ export default function App() {
     recorded.current = false;
     onlineRef.current?.close();
     onlineRef.current = null;
-    setOnlineActive(false); setOnlineSeat(null); setOnlineRoomId(undefined);
+    setOnlineActive(false); setOnlineSeat(null); setOnlineRoomId(undefined); setRemoteRoundScores(null);
     if (resetMatch) { setMatchRound(1); setMatchScores([0, 0, 0, 0]); }
     if (chargeEntry) setProfile(current => ({ ...current, coins: current.coins - newRoom.entryFee }));
     const nextGame = newGame(newRoom.mode);
@@ -60,7 +61,7 @@ export default function App() {
     });
     if (gameServerUrl) {
       const requestedRoomId = typeof window === 'undefined' ? undefined : new URLSearchParams(window.location.search).get('room')?.toUpperCase();
-      void connectGameServer({ roomId: requestedRoomId, mode: newRoom.mode, userId: auth.user?.id, onReady: ready => { setOnlineSeat(ready.seat); setOnlineRoomId(ready.roomId); setOnlineActive(true); }, onState: state => { setGame(state.game); setOnlineSeat(state.seat); setOnlineRoomId(state.roomId); setOnlineActive(true); }, onError: () => { onlineRef.current = null; setOnlineActive(false); } }).then(connection => { onlineRef.current = connection; });
+      void connectGameServer({ roomId: requestedRoomId, mode: newRoom.mode, userId: auth.user?.id, accessToken: auth.session?.access_token, onReady: ready => { setOnlineSeat(ready.seat); setOnlineRoomId(ready.roomId); setOnlineActive(true); }, onState: state => { setGame(state.game); setOnlineSeat(state.seat); setOnlineRoomId(state.roomId); setRemoteRoundScores(state.scoreSnapshot); setOnlineActive(true); }, onError: () => { onlineRef.current = null; setOnlineActive(false); } }).then(connection => { onlineRef.current = connection; });
     }
   };
   const nextRound = () => {
@@ -78,19 +79,26 @@ export default function App() {
   useEffect(() => {
     if (game?.ended && !recorded.current) {
       recorded.current = true;
-      const roundScores = scores(game);
+      const roundScores = onlineActive && remoteRoundScores ? remoteRoundScores : scores(game);
       setMatchScores(current => current.map((score, player) => score + roundScores[player]));
       void saveRoundResult(remoteGameId, matchRound, game.winner, game.finishType, roundScores);
       void appendGameAction(remoteGameId, auth.user?.id, 'ROUND_FINISHED', { round: matchRound, winner: game.winner, finishType: game.finishType, scores: roundScores });
       if (matchRound >= game.rules.roundCount) void finishGameSession(remoteGameId, true);
       setProfile(p => ({ ...p, games: p.games + 1, wins: p.wins + (game.winner === 0 ? 1 : 0), coins: p.coins + (game.winner === 0 ? room.reward : 0) }));
     }
-  }, [game?.ended]);
+  }, [game?.ended, onlineActive, remoteRoundScores]);
   useEffect(() => {
     document.title = game ? `${room.title} · Keyif 101` : 'Keyif 101 · Bir el daha?';
     document.documentElement.lang = 'tr';
   }, [game !== null, room.title]);
-  const claim = () => { if (profile.lastBonus !== todayKey()) { setProfile(p => p.lastBonus === todayKey() ? p : { ...p, coins: p.coins + 750, lastBonus: todayKey() }); setModal('bonus'); } };
+  const claim = () => {
+    if (profile.lastBonus === todayKey()) return;
+    if (auth.user && supabaseConfigured) {
+      void claimDailyBonus().then(result => { if (result.error || result.coins === null) { setWalletNotice(result.error ?? 'Günlük hediye alınamadı.'); setModal('notifications'); return; } setProfile(p => ({ ...p, coins: result.coins!, lastBonus: todayKey() })); setModal('bonus'); });
+      return;
+    }
+    setProfile(p => p.lastBonus === todayKey() ? p : { ...p, coins: p.coins + 750, lastBonus: todayKey() }); setModal('bonus');
+  };
   if ((!fontsLoaded && !fontError) || !ready || auth.loading) return <SafeAreaProvider><View style={{ flex: 1, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: C.text, fontSize: 36, fontFamily: 'Georgia' }}>keyif.</Text><Text style={{ color: C.muted, marginTop: 15 }}>Taşlar hazırlanıyor…</Text></View></SafeAreaProvider>;
   if (supabaseConfigured && !auth.user) return <SafeAreaProvider><StatusBar style="light" /><AuthScreen auth={auth} /></SafeAreaProvider>;
   return <SafeAreaProvider><SafeAreaView style={s.safe} edges={['top', 'bottom', 'left', 'right']}><StatusBar style="light" />
