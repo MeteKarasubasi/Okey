@@ -5,7 +5,7 @@ import { ChevronDown, Clock3, Gift, MessageCircle, RotateCcw, ShoppingBag, Troph
 import Svg, { Defs, Pattern, Path, Rect, Line } from 'react-native-svg';
 import { C, F, elevation } from '../theme';
 import { Avatar, Button, Coin, OkeyTile } from '../components/UI';
-import { Game, NAMES, botTurn, draw, discard, extendMeld, openMelds, bestMelds, rackMelds, collectMelds, timeoutTurn, sortTiles, rearrangeTable, face, Tile } from '../game/engine';
+import { Game, NAMES, draw, discard, extendMeld, openMelds, bestMelds, rackMelds, collectMelds, sortTiles, rearrangeTable, face, Tile } from '../game/engine';
 import { BOARD_COLUMNS, layoutMelds } from '../game/boardLayout';
 import { DISCARD, RACK, RackSlots, reconcileRack, moveRackSlot, arrangeRack, rackTarget, slotPosition } from '../game/rackLayout';
 import { Profile } from '../storage';
@@ -16,7 +16,7 @@ import { DrawTile, DrawDrop } from '../components/DrawTile';
 import { saveFriendRequest, saveGift } from '../social';
 import { appendGameAction } from '../game/online';
 
-type Props = { game: Game; setGame: React.Dispatch<React.SetStateAction<Game | null>>; profile: Profile; userId?: string; remoteGameId?: string; room: Room; round: number; roundCount: number; matchScores: number[]; onUpdateProfile: (patch: Partial<Profile>) => void; onExit: () => void; onHelp: () => void; onReplay: () => void; paused: boolean; playerSeat?: number; onRemoteAction?: (action: string, payload: Record<string, unknown>) => void; onlineRoomId?: string };
+type Props = { game: Game; setGame: React.Dispatch<React.SetStateAction<Game | null>>; profile: Profile; userId?: string; remoteGameId?: string; room: Room; round: number; roundCount: number; matchScores: number[]; onUpdateProfile: (patch: Partial<Profile>) => void; onExit: () => void; onHelp: () => void; onReplay: () => void; paused: boolean; playerSeat?: number; onRemoteAction?: (action: string, payload: Record<string, unknown>) => void; onlineRoomId?: string; onlineStarted?: boolean; onlinePlayers?: { seat: number }[] };
 const W = 1600, H = 900;
 type OpponentId = 1 | 2 | 3;
 type GiftHours = 2 | 3 | 5 | 24;
@@ -78,7 +78,7 @@ function DiscardSlot({ tile, x, y, onPress, label, highlighted, disabled = false
     {disabled && <Text style={s.lockedLabel}>KİLİTLİ</Text>}
   </Pressable>;
 }
-export default function GameScreen({ game, setGame, profile, userId, remoteGameId, room, round, roundCount, matchScores, onUpdateProfile, onExit, onHelp, onReplay, paused, playerSeat = 0, onRemoteAction, onlineRoomId }: Props) {
+export default function GameScreen({ game, setGame, profile, userId, remoteGameId, room, round, roundCount, matchScores, onUpdateProfile, onExit, onHelp, onReplay, paused, playerSeat = 0, onRemoteAction, onlineRoomId, onlineStarted = true, onlinePlayers = [] }: Props) {
   const seat = playerSeat;
   const [viewport, setViewport] = useState({ width: W, height: H });
   const scale = Math.min(viewport.width / W, viewport.height / H);
@@ -97,7 +97,8 @@ export default function GameScreen({ game, setGame, profile, userId, remoteGameI
   const [reducedMotion, setReducedMotion] = useState(false);
   const preOpenSlots = useRef<RackSlots | null>(null);
   const previousOpened = useRef(game.opened[seat]);
-  const hand = game.hands[seat], myTurn = game.turn === seat && !game.ended;
+  const hand = game.hands[seat], myTurn = game.turn === seat && !game.ended && (!onlineRoomId || onlineStarted);
+  const occupied = (targetSeat: number) => !onlineRoomId || onlinePlayers.some(player => player.seat === targetSeat);
   const profilePaused = profileTarget !== null;
   const slots = useMemo(() => reconcileRack(storedSlots, hand.map(t => t.id)), [storedSlots, hand]);
   useEffect(() => {
@@ -107,21 +108,15 @@ export default function GameScreen({ game, setGame, profile, userId, remoteGameI
   useEffect(() => { if (slots.some((id, i) => id !== storedSlots[i])) setSlots(slots); }, [slots, storedSlots]);
   useEffect(() => { AccessibilityInfo.isReduceMotionEnabled().then(setReducedMotion); const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReducedMotion); return () => sub.remove(); }, []);
   useEffect(() => {
-    if (onRemoteAction || game.turn === seat || game.ended || paused || profilePaused) return;
-    const timer = setTimeout(() => setGame(g => g ? botTurn(g) : null), profile.quick ? 650 : 1400);
-    return () => clearTimeout(timer);
-  }, [game.turn, game.turnCount, game.ended, paused, profilePaused, profile.quick, onRemoteAction, seat]);
-  useEffect(() => {
-    if (onRemoteAction || game.ended || paused || game.turn !== seat) return;
+    if (game.ended || paused || (onlineRoomId && !onlineStarted)) return;
     const tick = () => {
       const remaining = Math.max(0, Math.ceil((game.rules.turnTimeSeconds * 1000 - (Date.now() - game.turnStartedAt)) / 1000));
       setTimeLeft(remaining);
-      if (remaining === 0) setGame(current => current && current.turn === seat && !current.ended ? timeoutTurn(current) : current);
     };
     tick();
     const interval = setInterval(tick, 250);
     return () => clearInterval(interval);
-  }, [game.turn, game.turnCount, game.turnStartedAt, game.ended, paused, onRemoteAction, seat]);
+  }, [game.turn, game.turnCount, game.turnStartedAt, game.ended, paused, onlineRoomId, onlineStarted]);
   const melds = useMemo(() => rackMelds(hand, game.indicator, slots, game.mode), [hand, game.indicator, slots, game.mode]);
   const points = melds.reduce((sum, meld) => sum + meld.score, 0);
   const previousDiscard = game.discards[(game.turn + 3) % 4].at(-1);
@@ -215,8 +210,9 @@ export default function GameScreen({ game, setGame, profile, userId, remoteGameI
       <View pointerEvents="none" style={s.frame} />
       <View style={s.wallet}><Coin size={49} /><Text style={s.walletText}>{profile.coins.toLocaleString('tr-TR')}</Text></View>
       <View style={s.timer}><Clock3 size={31} color="#cde4dd" /><View style={{ flex: 1, gap: 7 }}><View style={s.timerTrack}><View style={[s.timerFill, { width: `${myTurn ? timeLeft / game.rules.turnTimeSeconds * 100 : 48}%`, backgroundColor: myTurn && timeLeft <= 5 ? '#f2a15f' : '#d0e66a' }]} /></View><Text style={s.timerText}>{myTurn ? `SIRA SENDE · ${timeLeft}` : `${NAMES[game.turn].toLocaleUpperCase('tr-TR')} OYNUYOR`}</Text></View></View>
-      <View style={{ position: 'absolute', left: 632, top: 10, width: 350 }}><Player person={3} name={NAMES[3]} active={game.turn === 3 && !game.ended} gifts={sentGifts[3]} onPress={() => openPlayerProfile(3)} /></View>
+      <View style={{ position: 'absolute', left: 632, top: 10, width: 350 }}>{occupied(3) ? <Player person={3} name={NAMES[3]} active={game.turn === 3 && !game.ended} gifts={sentGifts[3]} onPress={() => openPlayerProfile(3)} /> : <View style={s.waitingPlayer}><Text style={s.waitingPlayerText}>OYUNCU 4 BEKLENİYOR</Text></View>}</View>
       {onlineRoomId && <View style={s.onlineRoom}><Text style={s.onlineRoomLabel}>CANLI ODA</Text><Text style={s.onlineRoomId}>{onlineRoomId}</Text></View>}
+      {onlineRoomId && !onlineStarted && <View style={s.waitingBanner}><Text style={s.waitingBannerText}>GERÇEK OYUNCULAR BEKLENİYOR · {onlinePlayers.length}/4</Text></View>}
       <BevelButton label="SATIN AL" tone="green" onPress={onHelp} style={{ left: 1210, top: 12, width: 172, height: 52, flexDirection: 'row' }}><ShoppingBag size={25} color="#fff4ae" /></BevelButton>
       <BevelButton label="Sohbet" iconOnly onPress={onHelp} style={{ left: 1398, top: 12, width: 82, height: 52 }}><MessageCircle size={27} color="#f6f3e4" /></BevelButton>
       <BevelButton label="Menü" iconOnly onPress={onExit} style={{ left: 1493, top: 12, width: 82, height: 52 }}><ChevronDown size={28} color="#f6f3e4" /></BevelButton>
@@ -229,8 +225,8 @@ export default function GameScreen({ game, setGame, profile, userId, remoteGameI
       <DrawTile tile={canDraw ? game.stock.at(-1) : undefined} indicator={game.indicator} source={{ x: 1074, y: 433, width: 72, height: 96 }} scale={scale} disabled={!canDraw || game.stock.length === 0} reducedMotion={reducedMotion} onStart={touch} onMove={() => {}} onDrop={(point, tapped) => dropDrawnTile(point, tapped)} onFinish={finishDraw} />
       <View style={s.score}><Text style={s.scoreText}>{game.opened[seat] ? '101+' : points}</Text></View>
       <View style={s.sideBoard}><Svg width="100%" height="100%"><Rect width="100%" height="100%" fill="#0b2b3e" />{Array.from({ length: 7 }, (_, i) => <Line key={`v${i}`} x1={i * 32} x2={i * 32} y1={0} y2={520} stroke={i === 3 ? '#91a6a8' : '#285065'} strokeWidth={i === 3 ? 1.3 : 1} />)}{Array.from({ length: 14 }, (_, i) => <Line key={`h${i}`} y1={i * 40} y2={i * 40} x1={0} x2={192} stroke="#285065" />)}</Svg></View>
-      <View style={{ position: 'absolute', left: 9, top: 250 }}><Player person={1} name={NAMES[1]} active={game.turn === 1 && !game.ended} vertical gifts={sentGifts[1]} onPress={() => openPlayerProfile(1)} /></View>
-      <View style={{ position: 'absolute', right: 9, top: 250 }}><Player person={2} name={NAMES[2]} active={game.turn === 2 && !game.ended} vertical gifts={sentGifts[2]} onPress={() => openPlayerProfile(2)} /></View>
+      <View style={{ position: 'absolute', left: 9, top: 250 }}>{occupied(1) ? <Player person={1} name={NAMES[1]} active={game.turn === 1 && !game.ended} vertical gifts={sentGifts[1]} onPress={() => openPlayerProfile(1)} /> : <View style={[s.waitingPlayer, s.waitingVertical]}><Text style={s.waitingPlayerText}>OYUNCU 2{ '\n' }BEKLENİYOR</Text></View>}</View>
+      <View style={{ position: 'absolute', right: 9, top: 250 }}>{occupied(2) ? <Player person={2} name={NAMES[2]} active={game.turn === 2 && !game.ended} vertical gifts={sentGifts[2]} onPress={() => openPlayerProfile(2)} /> : <View style={[s.waitingPlayer, s.waitingVertical]}><Text style={s.waitingPlayerText}>OYUNCU 3{ '\n' }BEKLENİYOR</Text></View>}</View>
       <DiscardSlot x={28} y={86} tile={game.discards[1].at(-1)} label="Atılan taş" />
       <DiscardSlot x={1486} y={86} tile={game.discards[2].at(-1)} label="Atılan taş" />
       <DiscardSlot x={28} y={548} tile={previousDiscard} label="Yandan al" disabled={Boolean(game.discardLockedTileId && previousDiscard?.id === game.discardLockedTileId)} testID="draw-discard" onPress={() => run(g => draw(g, 'discard'))} />
@@ -287,7 +283,7 @@ const s = StyleSheet.create({
   wallet: { position: 'absolute', left: 24, top: 12, width: 177, height: 52, flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 9, borderWidth: 1, borderColor: '#57899a', backgroundColor: '#062737cc', paddingHorizontal: 9 }, walletText: { color: '#fff9e8', fontFamily: F.extra, fontSize: 28 }, onlineRoom: { position: 'absolute', left: 466, top: 12, minWidth: 112, height: 52, paddingHorizontal: 12, borderRadius: 9, borderWidth: 1, borderColor: '#5fa4b2', backgroundColor: '#062737cc', alignItems: 'center', justifyContent: 'center' }, onlineRoomLabel: { color: '#9ccbd0', fontFamily: F.bold, fontSize: 8, letterSpacing: 1.2 }, onlineRoomId: { color: '#fff4ae', fontFamily: F.extra, fontSize: 16, letterSpacing: 2, marginTop: 3 },
   timer: { position: 'absolute', left: 220, top: 12, width: 230, height: 52, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, borderRadius: 9, borderWidth: 1, borderColor: '#529587', backgroundColor: '#082e3fd9' }, timerTrack: { height: 5, borderRadius: 4, backgroundColor: '#405e68' }, timerFill: { height: 5, borderRadius: 4, backgroundColor: '#d0e66a' }, timerText: { color: '#e0efcf', fontFamily: F.bold, fontSize: 10, letterSpacing: 1.4 },
   bevel: { position: 'absolute', borderRadius: 13, borderWidth: 2, borderColor: '#91accb', borderBottomWidth: 5, borderBottomColor: '#071d35', alignItems: 'center', justifyContent: 'center', gap: 5, ...elevation(5, .3) }, buttonGlint: { position: 'absolute', left: 3, right: 3, top: 2, height: '42%', borderRadius: 8, backgroundColor: '#ffffff0b', borderTopWidth: 1, borderColor: '#ffffff55' }, buttonText: { fontFamily: F.extra, fontSize: 19, color: '#fffdf3', textAlign: 'center', lineHeight: 28, textShadowColor: '#071729', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 1 },
-  player: { height: 59, borderRadius: 11, borderWidth: 2, borderColor: '#425364', padding: 4, paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', gap: 12, ...elevation(3, .3) }, activePlayer: { borderColor: '#e5cb5e', ...elevation(5, .35) }, verticalPlayer: { width: 61, height: 260, flexDirection: 'column', paddingHorizontal: 3, paddingTop: 5 }, playerName: { fontFamily: F.bold, fontSize: 24, color: '#f6f2e7' }, giftsOnBand: { zIndex: 1, flexDirection: 'row', alignItems: 'center', gap: 4, paddingRight: 3 }, verticalGiftsOnBand: { position: 'absolute', bottom: 9, left: 17, flexDirection: 'column', gap: 2, paddingRight: 0 }, giftBadge: { minWidth: 30, height: 21, paddingHorizontal: 3, borderRadius: 6, borderWidth: 1, backgroundColor: '#1c2a35e8', flexDirection: 'row', gap: 2, alignItems: 'center', justifyContent: 'center' }, giftBadgeEmoji: { fontSize: 10 }, giftBadgeText: { color: '#fff1b7', fontFamily: F.bold, fontSize: 8 },
+  player: { height: 59, borderRadius: 11, borderWidth: 2, borderColor: '#425364', padding: 4, paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', gap: 12, ...elevation(3, .3) }, activePlayer: { borderColor: '#e5cb5e', ...elevation(5, .35) }, verticalPlayer: { width: 61, height: 260, flexDirection: 'column', paddingHorizontal: 3, paddingTop: 5 }, playerName: { fontFamily: F.bold, fontSize: 24, color: '#f6f2e7' }, waitingPlayer: { height: 59, borderRadius: 11, borderWidth: 1, borderColor: '#5c8a95', borderStyle: 'dashed', backgroundColor: '#082c3b99', alignItems: 'center', justifyContent: 'center', padding: 10 }, waitingVertical: { width: 61, height: 260 }, waitingPlayerText: { color: '#a9cbd0', fontFamily: F.bold, fontSize: 9, letterSpacing: 1, textAlign: 'center', lineHeight: 15 }, giftsOnBand: { zIndex: 1, flexDirection: 'row', alignItems: 'center', gap: 4, paddingRight: 3 }, verticalGiftsOnBand: { position: 'absolute', bottom: 9, left: 17, flexDirection: 'column', gap: 2, paddingRight: 0 }, giftBadge: { minWidth: 30, height: 21, paddingHorizontal: 3, borderRadius: 6, borderWidth: 1, backgroundColor: '#1c2a35e8', flexDirection: 'row', gap: 2, alignItems: 'center', justifyContent: 'center' }, giftBadgeEmoji: { fontSize: 10 }, giftBadgeText: { color: '#fff1b7', fontFamily: F.bold, fontSize: 8 }, waitingBanner: { position: 'absolute', left: 510, top: 70, width: 310, minHeight: 34, borderRadius: 17, borderWidth: 1, borderColor: '#9fc8a566', backgroundColor: '#082d40dd', alignItems: 'center', justifyContent: 'center', zIndex: 20 }, waitingBannerText: { color: '#d8e9c7', fontFamily: F.bold, fontSize: 10, letterSpacing: 1 },
   mainBoard: { position: 'absolute', left: 200, top: 80, width: 840, height: 520 }, badges: { position: 'absolute', left: 1054, top: 80, width: 108, gap: 7 }, badge: { height: 45, borderRadius: 8, borderWidth: 1, borderColor: '#082f43', justifyContent: 'center', alignItems: 'center' }, badgeText: { fontFamily: F.bold, fontSize: 19, color: '#f2f4e6' },
   indicator: { position: 'absolute', left: 1067, top: 296, padding: 7, borderWidth: 2, borderColor: '#4e91a5', borderRadius: 9, backgroundColor: '#082d40' }, stock: { position: 'absolute', left: 1067, top: 426, padding: 7, borderWidth: 2, borderColor: '#4e91a5', borderRadius: 9, backgroundColor: '#082d40' }, stockCount: { position: 'absolute', bottom: 12, alignSelf: 'center', borderWidth: 2, borderColor: '#fff', backgroundColor: '#d3d8d5', borderRadius: 20, minWidth: 38, height: 38, alignItems: 'center', justifyContent: 'center' }, stockText: { fontFamily: F.bold, color: '#182a33', fontSize: 25 },
   score: { position: 'absolute', left: 1061, top: 612, width: 94, height: 42, borderRadius: 14, borderWidth: 2, borderColor: '#aacbeb', borderBottomWidth: 4, backgroundColor: '#254983', alignItems: 'center', justifyContent: 'center' }, scoreText: { fontFamily: F.extra, color: '#fff', fontSize: 28 }, sideBoard: { position: 'absolute', left: 1176, top: 80, width: 192, height: 520, borderRadius: 7, overflow: 'hidden', borderWidth: 1, borderColor: '#2b5d6d' },

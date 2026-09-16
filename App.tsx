@@ -10,7 +10,7 @@ import { Avatar, Button, Coin, IconButton, Label, Logo } from './src/components/
 import Lobby, { Page, Room, ROOMS } from './src/screens/Lobby';
 import GameScreen from './src/screens/GameScreen';
 import AuthScreen from './src/screens/AuthScreen';
-import { Game, Mode, newGame, scores } from './src/game/engine';
+import { Game, Mode, rulesFor, scores } from './src/game/engine';
 import { claimDailyBonus, Profile, todayKey, useProfile } from './src/storage';
 import { useAuth } from './src/auth';
 import { supabaseConfigured } from './src/supabase';
@@ -40,6 +40,8 @@ export default function App() {
   const [onlineSeat, setOnlineSeat] = useState<number | null>(null);
   const [onlineRoomId, setOnlineRoomId] = useState<string | undefined>();
   const [onlineActive, setOnlineActive] = useState(false);
+  const [onlineStarted, setOnlineStarted] = useState(false);
+  const [onlinePlayers, setOnlinePlayers] = useState<{ seat: number }[]>([]);
   const [remoteRoundScores, setRemoteRoundScores] = useState<number[] | null>(null);
   const onlineRef = useRef<GameConnection | null>(null);
   const recorded = useRef(false);
@@ -49,30 +51,23 @@ export default function App() {
     recorded.current = false;
     onlineRef.current?.close();
     onlineRef.current = null;
-    setOnlineActive(false); setOnlineSeat(null); setOnlineRoomId(undefined); setRemoteRoundScores(null);
+    setOnlineActive(false); setOnlineSeat(null); setOnlineRoomId(undefined); setOnlineStarted(false); setOnlinePlayers([]); setRemoteRoundScores(null);
     if (resetMatch) { setMatchRound(1); setMatchScores([0, 0, 0, 0]); }
     if (chargeEntry) setProfile(current => ({ ...current, coins: current.coins - newRoom.entryFee }));
-    const nextGame = newGame(newRoom.mode);
     setRemoteGameId(undefined);
-    setRoom(newRoom); setGame(nextGame); setModal(null);
-    void createGameSession(auth.user?.id, newRoom, nextGame.rules).then(id => {
+    setRoom(newRoom); setGame(null); setModal(null);
+    void createGameSession(auth.user?.id, newRoom, rulesFor(newRoom.mode)).then(id => {
       setRemoteGameId(id ?? undefined);
       if (id) void appendGameAction(id, auth.user?.id, 'GAME_STARTED', { mode: newRoom.mode, round: 1 });
     });
-    if (gameServerUrl) {
-      const requestedRoomId = typeof window === 'undefined' ? undefined : new URLSearchParams(window.location.search).get('room')?.toUpperCase();
-      void connectGameServer({ roomId: requestedRoomId, mode: newRoom.mode, userId: auth.user?.id, accessToken: auth.session?.access_token, onReady: ready => { setOnlineSeat(ready.seat); setOnlineRoomId(ready.roomId); setOnlineActive(true); }, onState: state => { setGame(state.game); setOnlineSeat(state.seat); setOnlineRoomId(state.roomId); setRemoteRoundScores(state.scoreSnapshot); setOnlineActive(true); }, onError: () => { onlineRef.current = null; setOnlineActive(false); } }).then(connection => { onlineRef.current = connection; });
-    }
+    if (!gameServerUrl) { setWalletNotice('Canlı oyun sunucusu yapılandırılmamış. Masa açılamadı.'); setModal('notifications'); return; }
+    const requestedRoomId = typeof window === 'undefined' ? undefined : new URLSearchParams(window.location.search).get('room')?.toUpperCase();
+    void connectGameServer({ roomId: requestedRoomId, mode: newRoom.mode, userId: auth.user?.id, accessToken: auth.session?.access_token, onReady: ready => { setOnlineSeat(ready.seat); setOnlineRoomId(ready.roomId); setOnlineActive(true); }, onState: state => { setGame(state.game); setOnlineSeat(state.seat); setOnlineRoomId(state.roomId); setOnlineStarted(state.started); setOnlinePlayers(state.players); setRemoteRoundScores(state.scoreSnapshot); setOnlineActive(true); }, onError: message => { onlineRef.current = null; setOnlineActive(false); setGame(null); setWalletNotice(message); setModal('notifications'); } }).then(connection => { onlineRef.current = connection; }).catch(() => { setGame(null); });
   };
   const nextRound = () => {
     if (!game) return;
-    if (matchRound >= game.rules.roundCount) { setGame(null); setPage('lobby'); return; }
-    recorded.current = false;
-    const nextRoundNumber = matchRound + 1;
-    setMatchRound(nextRoundNumber);
-    const nextGame = newGame(room.mode);
-    setGame(nextGame);
-    void appendGameAction(remoteGameId, auth.user?.id, 'ROUND_STARTED', { round: nextRoundNumber });
+    onlineRef.current?.close(); onlineRef.current = null;
+    setOnlineActive(false); setOnlineRoomId(undefined); setOnlineSeat(null); setOnlineStarted(false); setOnlinePlayers([]); setGame(null); setPage('lobby');
   };
   const exit = () => { if (game?.ended) { onlineRef.current?.close(); onlineRef.current = null; setOnlineActive(false); setGame(null); setPage('lobby'); } else setModal('exit'); };
   const navigate = (next: Page) => { setPage(next); };
@@ -102,7 +97,7 @@ export default function App() {
   if ((!fontsLoaded && !fontError) || !ready || auth.loading) return <SafeAreaProvider><View style={{ flex: 1, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: C.text, fontSize: 36, fontFamily: 'Georgia' }}>keyif.</Text><Text style={{ color: C.muted, marginTop: 15 }}>Taşlar hazırlanıyor…</Text></View></SafeAreaProvider>;
   if (supabaseConfigured && !auth.user) return <SafeAreaProvider><StatusBar style="light" /><AuthScreen auth={auth} /></SafeAreaProvider>;
   return <SafeAreaProvider><SafeAreaView style={s.safe} edges={['top', 'bottom', 'left', 'right']}><StatusBar style="light" />
-    {game ? <GameScreen game={game} setGame={setGame} profile={profile} userId={auth.user?.id} remoteGameId={remoteGameId} room={room} round={matchRound} roundCount={game.rules.roundCount} matchScores={matchScores} onUpdateProfile={update} onExit={exit} onHelp={() => setModal('help')} onReplay={nextRound} paused={false} playerSeat={onlineSeat ?? 0} onRemoteAction={onlineActive ? (action, payload) => onlineRef.current?.send(action, payload) : undefined} onlineRoomId={onlineActive ? onlineRoomId : undefined} /> : <View style={{ flex: 1, flexDirection: 'row' }}>
+    {game ? <GameScreen game={game} setGame={setGame} profile={profile} userId={auth.user?.id} remoteGameId={remoteGameId} room={room} round={matchRound} roundCount={game.rules.roundCount} matchScores={matchScores} onUpdateProfile={update} onExit={exit} onHelp={() => setModal('help')} onReplay={nextRound} paused={false} playerSeat={onlineSeat ?? 0} onRemoteAction={onlineActive ? (action, payload) => onlineRef.current?.send(action, payload) : undefined} onlineRoomId={onlineActive ? onlineRoomId : undefined} onlineStarted={onlineStarted} onlinePlayers={onlinePlayers} /> : <View style={{ flex: 1, flexDirection: 'row' }}>
       <View style={s.sidebar}><View style={{ paddingLeft: 8, marginBottom: 49 }}><Logo /></View><Label style={{ paddingLeft: 17, marginBottom: 16, fontSize: 8 }} color="#8fa596">OYUN ALANI</Label><View style={{ gap: 8 }}>{NAV.map(item => { const Icon = item.icon; return <Pressable key={item.page} accessibilityRole="button" accessibilityState={{ selected: page === item.page }} onPress={() => navigate(item.page)} style={({ hovered, pressed }: { hovered?: boolean; pressed: boolean }) => [s.navItem, page === item.page && s.navActive, hovered && page !== item.page && { backgroundColor: '#ffffff05' }, pressed && { opacity: .7 }]}><Icon size={19} strokeWidth={1.7} color={page === item.page ? C.green : C.muted} /><Text style={[s.navText, page === item.page && { color: C.green }]}>{item.title}</Text>{page === item.page && <View style={{ width: 5, height: 5, backgroundColor: C.green, borderRadius: 5, marginLeft: 'auto' }} />}</Pressable>; })}</View>
         <View style={s.sideCard}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}><Coffee size={20} strokeWidth={1.4} color={C.gold} /><Text style={{ color: C.text, fontFamily: F.serif, fontSize: 20 }}>Senin masan.</Text></View><Text style={{ color: C.muted, fontFamily: F.regular, fontSize: 11, lineHeight: 19, marginTop: 12, marginBottom: 18 }}>Kuralları sen seç,{ '\n' }biz taşları dağıtalım.</Text><Button onPress={() => { setCustomTheme(profile.theme); setModal('custom'); }} secondary compact icon={<Plus size={15} color={C.text} />}>Masa oluştur</Button></View>
         <View style={{ marginTop: 'auto', gap: 3 }}><Pressable accessibilityRole="button" onPress={() => navigate('rules')} style={s.navItem}><CircleHelp size={18} color={C.muted} /><Text style={s.navText}>Nasıl oynanır?</Text></Pressable><Pressable accessibilityRole="button" onPress={() => navigate('settings')} style={s.navItem}><Settings size={18} color={C.muted} /><Text style={s.navText}>Ayarlar</Text></Pressable></View><View style={s.sideFooter}><View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: C.green }} /><Text style={{ color: '#92ab9a', fontSize: 9, fontFamily: F.medium }}>Keyif her zaman yanında.</Text></View>
@@ -114,7 +109,7 @@ export default function App() {
     </View>}
     <Modal visible={modal !== null} transparent animationType="fade" onRequestClose={() => setModal(null)}><View style={s.scrim}><Pressable accessibilityLabel="Pencereyi kapat" onPress={() => setModal(null)} style={StyleSheet.absoluteFill} /><View style={[s.modal, modal === 'help' && { maxWidth: 600 }]} accessibilityViewIsModal><View style={{ position: 'absolute', right: 14, top: 14, zIndex: 2 }}><IconButton label="Kapat" icon={<X color={C.muted} size={18} />} onPress={() => setModal(null)} /></View>
       <ScrollView contentContainerStyle={{ padding: 28, paddingTop: 38 }}>
-      {modal === 'custom' && <><Label color={C.gold}>SENİN MASAN, SENİN KEYFİN</Label><Text style={s.modalTitle}>Taşları dağıtalım.</Text><Text style={s.modalDescription}>Üç bot sana eşlik edecek. Masa ayarlarını seç ve oyuna başla.</Text><Label style={{ marginTop: 24 }}>OYUN TÜRÜ</Label><View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>{(['classic', 'pairs'] as Mode[]).map(mode => <Button key={mode} secondary={customMode !== mode} style={{ flex: 1 }} onPress={() => setCustomMode(mode)} compact>{mode === 'classic' ? 'Klasik 101' : '5 çift'}</Button>)}</View><Label style={{ marginTop: 24 }}>MASA RENGİ</Label><View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>{(['green', 'blue', 'plum'] as const).map((theme, i) => <Pressable accessibilityRole="button" accessibilityLabel={['Yeşil keçe', 'Gece mavisi', 'Mürdüm'][i]} accessibilityState={{ selected: customTheme === theme }} key={theme} onPress={() => setCustomTheme(theme)} style={{ flex: 1, height: 60, backgroundColor: ['#3c634c', '#33586a', '#624554'][i], borderRadius: 12, borderWidth: 2, borderColor: customTheme === theme ? C.gold : '#ffffff15', alignItems: 'center', justifyContent: 'center' }}>{customTheme === theme && <Check color={C.gold} size={20} />}</Pressable>)}</View><Text style={[s.modalDescription, { fontSize: 11, marginVertical: 20 }]}>Giriş ücretsiz · Tek el · Kazanana +{customMode === 'pairs' ? 750 : 500} çip</Text><Button icon={<ArrowRight color={C.ink} size={18} />} onPress={() => start({ ...ROOMS[customMode === 'pairs' ? 1 : 0], theme: customTheme, title: 'Benim masam' })}>Masayı aç</Button></>}
+      {modal === 'custom' && <><Label color={C.gold}>SENİN MASAN, SENİN KEYFİN</Label><Text style={s.modalTitle}>Taşları dağıtalım.</Text><Text style={s.modalDescription}>Masa ayarlarını seç; dört gerçek oyuncu tamamlandığında oyun başlayacak.</Text><Label style={{ marginTop: 24 }}>OYUN TÜRÜ</Label><View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>{(['classic', 'pairs'] as Mode[]).map(mode => <Button key={mode} secondary={customMode !== mode} style={{ flex: 1 }} onPress={() => setCustomMode(mode)} compact>{mode === 'classic' ? 'Klasik 101' : '5 çift'}</Button>)}</View><Label style={{ marginTop: 24 }}>MASA RENGİ</Label><View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>{(['green', 'blue', 'plum'] as const).map((theme, i) => <Pressable accessibilityRole="button" accessibilityLabel={['Yeşil keçe', 'Gece mavisi', 'Mürdüm'][i]} accessibilityState={{ selected: customTheme === theme }} key={theme} onPress={() => setCustomTheme(theme)} style={{ flex: 1, height: 60, backgroundColor: ['#3c634c', '#33586a', '#624554'][i], borderRadius: 12, borderWidth: 2, borderColor: customTheme === theme ? C.gold : '#ffffff15', alignItems: 'center', justifyContent: 'center' }}>{customTheme === theme && <Check color={C.gold} size={20} />}</Pressable>)}</View><Text style={[s.modalDescription, { fontSize: 11, marginVertical: 20 }]}>Giriş ücretsiz · Tek el · Kazanana +{customMode === 'pairs' ? 750 : 500} çip</Text><Button icon={<ArrowRight color={C.ink} size={18} />} onPress={() => start({ ...ROOMS[customMode === 'pairs' ? 1 : 0], theme: customTheme, title: 'Benim masam' })}>Masayı aç</Button></>}
       {modal === 'bonus' && <View style={{ alignItems: 'center', paddingTop: 15 }}><Gift size={42} color={C.gold} /><Text style={s.modalTitle}>Bugün şanslı günün.</Text><Text style={[s.modalDescription, { textAlign: 'center' }]}>Günlük hediyen cüzdanına eklendi.{ '\n' }Yarın yine uğra!</Text><View style={{ marginVertical: 25, flexDirection: 'row', alignItems: 'center', gap: 13 }}><Coin size={43} /><Text style={{ fontFamily: F.serif, color: C.gold, fontSize: 42 }}>+750</Text></View><Button onPress={() => setModal(null)} style={{ width: '100%' }}>Teşekkürler!</Button></View>}
       {modal === 'exit' && <><Coffee size={31} color={C.gold} /><Text style={s.modalTitle}>Küçük bir mola mı?</Text><Text style={[s.modalDescription, { marginBottom: 25 }]}>Lobiye dönersen bu el kapanır. Tamamlanmamış el istatistiklerine eklenmez.</Text><Button onPress={() => setModal(null)}>Oyuna dön</Button><Button secondary style={{ marginTop: 10 }} onPress={() => { setGame(null); setModal(null); setPage('lobby'); }}>Lobiye dön</Button></>}
       {modal === 'help' && <><Label color={C.gold}>MASA REHBERİ</Label><Text style={s.modalTitle}>Keyifle oyna.</Text>{[

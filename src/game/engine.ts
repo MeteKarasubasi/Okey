@@ -17,7 +17,7 @@ export type Game = {
   mode: Mode; rules: RuleConfig; winner: number | null; finishType: FinishType; ended: boolean; turnCount: number; message: string;
 };
 export const COLORS: Color[] = ['red', 'blue', 'black', 'yellow'];
-export const NAMES = ['Sen', 'GÜLAY', 'GÜLAY', 'GÜLAY'];
+export const NAMES = ['Sen', 'Oyuncu 2', 'Oyuncu 3', 'Oyuncu 4'];
 export const COLOR_NAMES: Record<Color, string> = { red: 'Kırmızı', blue: 'Mavi', black: 'Siyah', yellow: 'Sarı' };
 export const RULES: Record<Mode, RuleConfig> = {
   classic: { mode: 'classic', openingThreshold: 101, minimumMeldSize: 3, pairMode: false, allowDiscardPickupBeforeOpen: true, requireDiscardForOpening: true, allowTableRearrangement: true, allowPairBreak: false, allowJokerFinish: true, allowHandFinish: true, allowPairFinish: false, turnTimeSeconds: 30, unopenedPenalty: 202, jokerFinishMultiplier: 2, roundCount: 5 },
@@ -308,34 +308,6 @@ export function extendMeld(game: Game, tileId: string, meldIndex: number): Game 
   if (!valid) return fail(game, 'Seçtiğin taş bu pere uymuyor.');
   const next = copy(game); next.melds[meldIndex] = { ...valid, owner: target.owner };
   next.hands[next.turn] = next.hands[next.turn].filter(t => t.id !== tileId); next.message = 'Taş masadaki pere işlendi.'; return next;
-}
-export function botTurn(game: Game): Game {
-  if (game.turn === 0 || game.ended) return game;
-  let next = draw(game);
-  if (next.ended) return next;
-  const opened = openMelds(next);
-  if (opened.hands[next.turn].length < next.hands[next.turn].length) next = opened;
-  if (next.opened[next.turn]) {
-    for (const tile of [...next.hands[next.turn]]) {
-      for (let i = 0; i < next.melds.length; i++) {
-        const extended = extendMeld(next, tile.id, i);
-        if (extended.hands[next.turn].length < next.hands[next.turn].length) { next = extended; break; }
-      }
-    }
-  }
-  const hand = next.hands[next.turn];
-  const usefulness = (tile: Tile) => {
-    if (isJoker(tile, next.indicator)) return 1000;
-    const f = face(tile, next.indicator);
-    return hand.reduce((sum, other) => {
-      if (other.id === tile.id) return sum;
-      const g = face(other, next.indicator);
-      if (game.mode === 'pairs') return sum + (f.value === g.value && f.color === g.color ? 20 : 0);
-      return sum + (f.value === g.value && f.color !== g.color ? 6 : f.color === g.color && Math.abs(f.value - g.value) === 1 ? 8 : f.color === g.color && Math.abs(f.value - g.value) === 2 ? 3 : 0);
-    }, 0) - f.value / 100;
-  };
-  const worst = [...hand].sort((a, b) => usefulness(a) - usefulness(b))[0];
-  return worst ? discard(next, worst.id) : next;
 }
 export type RoundScore = { winner: number | null; finishType: FinishType; players: { player: number; score: number }[] };
 export function calculateRoundScore(game: Game): RoundScore {

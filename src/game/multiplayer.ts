@@ -1,6 +1,6 @@
 import type { Game, Mode } from './engine';
 
-type ServerState = { type: 'state'; roomId: string; seat: number; players: { seat: number }[]; game: Game; scoreSnapshot: number[] };
+type ServerState = { type: 'state'; roomId: string; seat: number; players: { seat: number }[]; started: boolean; game: Game; scoreSnapshot: number[] };
 type ServerReady = { type: 'ready'; roomId: string; seat: number };
 type ConnectOptions = {
   mode: Mode;

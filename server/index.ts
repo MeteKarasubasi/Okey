@@ -1,12 +1,12 @@
 import 'dotenv/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
-import { botTurn, collectMelds, discard, draw, extendMeld, newGame, openMelds, rearrangeTable, scores, timeoutTurn, type Game, type Meld, type Mode, type Tile } from '../src/game/engine';
+import { collectMelds, discard, draw, extendMeld, newGame, openMelds, rearrangeTable, scores, timeoutTurn, type Game, type Meld, type Mode, type Tile } from '../src/game/engine';
 
 type ClientMessage = { type: 'create' | 'join' | 'action' | 'ping'; roomId?: string; accessToken?: string; userId?: string; mode?: Mode; action?: string; payload?: Record<string, unknown> };
 type Player = { ws: WebSocket; userId: string; seat: number };
 type Reservation = { seat: number; expiresAt: number };
-type Room = { id: string; game: Game; players: Map<WebSocket, Player>; reserved: Map<string, Reservation>; lastActivity: number; sequence: number; dbId?: string; roundSaved?: boolean; timer?: NodeJS.Timeout };
+type Room = { id: string; game: Game; started: boolean; players: Map<WebSocket, Player>; reserved: Map<string, Reservation>; lastActivity: number; sequence: number; dbId?: string; roundSaved?: boolean; timer?: NodeJS.Timeout };
 type ClientMeta = { ip: string; timestamps: number[] };
 
 const port = Number(process.env.GAME_WS_PORT ?? 8787);
@@ -38,7 +38,7 @@ function hiddenGame(game: Game, seat: number): Game {
 }
 function broadcast(room: Room) {
   const players = playersFor(room);
-  for (const player of room.players.values()) send(player.ws, { type: 'state', roomId: room.id, seat: player.seat, players, game: hiddenGame(room.game, player.seat), scoreSnapshot: scores(room.game) });
+  for (const player of room.players.values()) send(player.ws, { type: 'state', roomId: room.id, seat: player.seat, players, started: room.started, game: hiddenGame(room.game, player.seat), scoreSnapshot: scores(room.game) });
 }
 async function persistRoom(room: Room, actor?: Player, action?: string, payload: Record<string, unknown> = {}) {
   if (!adminClient || !room.dbId) return;
@@ -62,13 +62,12 @@ async function createPersistentRoom(room: Room, host: Player) {
 function clearRoomTimer(room: Room) { if (room.timer) clearTimeout(room.timer); room.timer = undefined; }
 function scheduleRoom(room: Room) {
   clearRoomTimer(room);
-  if (room.game.ended) return;
+  if (!room.started || room.game.ended) return;
   const turn = room.game.turn;
-  const humanTurn = [...room.players.values()].some(player => player.seat === turn);
-  const wait = humanTurn ? Math.max(250, room.game.rules.turnTimeSeconds * 1000 - (Date.now() - room.game.turnStartedAt) + 250) : 1200;
+  const wait = Math.max(250, room.game.rules.turnTimeSeconds * 1000 - (Date.now() - room.game.turnStartedAt) + 250);
   room.timer = setTimeout(() => {
     if (room.game.ended || room.game.turn !== turn) return scheduleRoom(room);
-    room.game = humanTurn ? timeoutTurn(room.game) : botTurn(room.game);
+    room.game = timeoutTurn(room.game);
     room.lastActivity = Date.now();
     broadcast(room);
     void persistRoom(room);
@@ -145,6 +144,7 @@ function joinRoom(ws: WebSocket, id: string, userId: string) {
   room.reserved.delete(userId);
   const player = { ws, userId, seat };
   room.players.set(ws, player); roomBySocket.set(ws, room); room.lastActivity = Date.now();
+  if (room.players.size === 4) { room.started = true; room.game.turnStartedAt = Date.now(); }
   if (adminClient && room.dbId) void adminClient.from('game_players').insert({ game_id: room.dbId, player_id: userId, seat });
   send(ws, { type: 'ready', roomId: room.id, seat }); broadcast(room); scheduleRoom(room);
 }
@@ -161,12 +161,12 @@ async function handleMessage(ws: WebSocket, raw: RawData) {
   if (message.type === 'create') {
     if (rooms.size >= maxRooms) return fail(ws, 'Sunucu şu anda yeni oda kabul etmiyor.');
     const id = roomId();
-  const room: Room = { id, game: newGame(message.mode === 'pairs' ? 'pairs' : 'classic'), players: new Map(), reserved: new Map(), lastActivity: Date.now(), sequence: 0 };
+  const room: Room = { id, game: newGame(message.mode === 'pairs' ? 'pairs' : 'classic'), started: false, players: new Map(), reserved: new Map(), lastActivity: Date.now(), sequence: 0 };
     rooms.set(id, room);
     const player = { ws, userId: identity, seat: 0 };
     room.players.set(ws, player); roomBySocket.set(ws, room);
     void createPersistentRoom(room, player);
-    send(ws, { type: 'ready', roomId: id, seat: 0 }); broadcast(room); scheduleRoom(room); return;
+    send(ws, { type: 'ready', roomId: id, seat: 0 }); broadcast(room); return;
   }
   if (message.type === 'join') return isSafeRoomId(message.roomId) ? joinRoom(ws, message.roomId, identity) : fail(ws, 'Geçersiz oda kodu.');
   if (message.type !== 'action') return fail(ws, 'Bilinmeyen mesaj türü.');
@@ -177,6 +177,7 @@ async function handleMessage(ws: WebSocket, raw: RawData) {
   const payload = message.payload && typeof message.payload === 'object' && !Array.isArray(message.payload) ? message.payload : {};
   const payloadError = validatePayload(message.action, payload);
   if (payloadError) return fail(ws, payloadError);
+  if (!room.started) return fail(ws, 'Masa dört gerçek oyuncunun katılmasını bekliyor.');
   if (room.game.turn !== player.seat) return fail(ws, 'Sıra bu oyuncuda değil.');
   const next = actionGame(room, player, { ...message, payload });
   if (next === room.game) return fail(ws, room.game.message);

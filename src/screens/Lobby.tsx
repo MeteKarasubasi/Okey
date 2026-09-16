@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, ScrollView, StyleSheet, Switch, TextInput } from 'react-native';
+import { View, Text, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ArrowRight, ArrowUpRight, Check, ChevronRight, Clock3, Coffee, Gift, Layers3, Leaf, Moon, Plus, Settings2, ShieldCheck, Sparkles, Trophy, Users, X, Zap } from 'lucide-react-native';
 import { C, F, elevation } from '../theme';
@@ -20,10 +20,10 @@ type Props = { page: Page; profile: Profile; update: (patch: Partial<Profile>) =
 function RoomCard({ room, onPress }: { room: Room; onPress: () => void }) {
   const Icon = room.icon;
   const tint = room.theme === 'plum' ? '#b59aa7' : room.theme === 'blue' ? '#9eafc5' : '#b4c79b';
-  return <Pressable accessibilityRole="button" accessibilityLabel={`${room.title}, botlara karşı oyna`} onPress={onPress} style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [s.roomCard, { borderColor: hovered ? tint : C.border, opacity: pressed ? .85 : 1 }]}>
+  return <Pressable accessibilityRole="button" accessibilityLabel={`${room.title}, gerçek oyuncularla oyna`} onPress={onPress} style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [s.roomCard, { borderColor: hovered ? tint : C.border, opacity: pressed ? .85 : 1 }]}>
     <View style={s.roomTop}><View style={[s.roomIcon, { backgroundColor: `${tint}14` }]}><Icon size={19} strokeWidth={1.7} color={tint} /></View><Label color={tint} style={{ fontSize: 8, letterSpacing: 1.25 }}>{room.tag}</Label><ArrowUpRight size={17} color={C.muted} /></View>
     <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 4, marginTop: 20 }}><View style={{ flex: 1 }}><Text style={s.roomTitle}>{room.title}</Text><Text style={s.roomSubtitle}>{room.subtitle}</Text></View><View style={{ flexDirection: 'row', paddingRight: 4, transform: [{ rotate: '9deg' }] }}><View style={{ transform: [{ rotate: '-14deg' }], marginRight: -10, marginTop: 3 }}><OkeyTile size={29} tile={{ value: room.mode === 'pairs' ? 8 : 5, color: room.theme === 'plum' ? 'red' : 'blue' }} /></View><OkeyTile size={29} tile={{ value: room.mode === 'pairs' ? 8 : 6, color: room.theme === 'plum' ? 'red' : 'blue' }} /></View></View>
-    <View style={s.roomFooter}><View style={s.inline}><Users size={13} color={C.muted} /><Text style={s.small}>3 bot + sen</Text></View><View style={s.inline}><Coin size={16} /><Text style={[s.small, { color: C.gold }]}>-{room.entryFee} giriş · +{room.reward}</Text></View></View>
+    <View style={s.roomFooter}><View style={s.inline}><Users size={13} color={C.muted} /><Text style={s.small}>4 gerçek oyunculu masa</Text></View><View style={s.inline}><Coin size={16} /><Text style={[s.small, { color: C.gold }]}>-{room.entryFee} giriş · +{room.reward}</Text></View></View>
   </Pressable>;
 }
 
@@ -33,12 +33,12 @@ export default function Lobby({ page, profile, update, onStart, navigate, onCust
   const [saved, setSaved] = useState(false);
   const claimed = profile.lastBonus === todayKey();
   const titles: Record<Page, [string, string]> = {
-    lobby: ['Bir el daha?', 'Günün yorgunluğu kapıda kalsın.'], tables: ['Masanı seç.', 'Taşlar dağıtılsın, keyif başlasın.'],
+    lobby: ['Bir el daha?', 'Günün yorgunluğu kapıda kalsın.'], tables: ['Masanı seç.', 'Dört gerçek oyuncu buluşsun, keyif başlasın.'],
     stats: ['Senin hikâyen.', 'Her el, yeni bir tecrübe.'], collection: ['Masana renk kat.', 'Küçük detaylar, sana özel bir atmosfer.'],
     settings: ['Tam senlik.', 'Oyununu kendi ritmine ayarla.'], rules: ['Oyunun incelikleri.', 'İlk taşından son perine, küçük bir rehber.'],
   };
   return <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
-    <View style={s.pageHeading}><View><Label color={C.green}>{page === 'lobby' ? 'İYİ Kİ GELDİN' : 'KEYİF 101'}</Label><Text accessibilityRole="header" style={s.heading}>{titles[page][0]}</Text><Text style={s.subtitle}>{titles[page][1]}</Text></View><View style={s.modeBadge}><View style={s.statusDot} /><Text style={s.small}>Botlarla, kendi temponda</Text></View></View>
+    <View style={s.pageHeading}><View><Label color={C.green}>{page === 'lobby' ? 'İYİ Kİ GELDİN' : 'KEYİF 101'}</Label><Text accessibilityRole="header" style={s.heading}>{titles[page][0]}</Text><Text style={s.subtitle}>{titles[page][1]}</Text></View><View style={s.modeBadge}><View style={s.statusDot} /><Text style={s.small}>Gerçek oyuncularla canlı masa</Text></View></View>
 
     {page === 'lobby' && <>
       <View style={s.heroRow}>
@@ -66,7 +66,7 @@ export default function Lobby({ page, profile, update, onStart, navigate, onCust
     {page === 'tables' && <>
       <View style={s.filterRow}>{([['all', 'Tüm masalar'], ['classic', 'Klasik 101'], ['pairs', 'Çift açmalı']] as const).map(([value, label]) => <Pressable accessibilityRole="button" accessibilityState={{ selected: filter === value }} key={value} onPress={() => setFilter(value)} style={[s.filter, filter === value && { backgroundColor: C.green, borderColor: C.green }]}><Text style={{ fontFamily: F.bold, color: filter === value ? C.ink : C.muted, fontSize: 12 }}>{label}</Text></Pressable>)}</View>
       <View style={s.rooms}>{ROOMS.filter(r => filter === 'all' || r.mode === filter).map(room => <RoomCard key={room.title} room={room} onPress={() => onStart(room)} />)}</View>
-      <View style={[s.infoPanel, { marginTop: 24, alignItems: 'center', paddingVertical: 35 }]}><Settings2 color={C.gold} size={30} /><Text style={s.panelTitle}>Kendi masanı kur.</Text><Text style={[s.subtitle, { textAlign: 'center', marginBottom: 24 }]}>Oyun türünü, masanın rengini ve bot hızını sen seç.</Text><Button onPress={onCustom} secondary icon={<Plus size={18} color={C.text} />}>Masa oluştur</Button><Text style={[s.small, { marginTop: 18 }]}>Tüm masalar 3 bilgisayar oyuncusuyla oynanır.</Text></View>
+      <View style={[s.infoPanel, { marginTop: 24, alignItems: 'center', paddingVertical: 35 }]}><Settings2 color={C.gold} size={30} /><Text style={s.panelTitle}>Kendi masanı kur.</Text><Text style={[s.subtitle, { textAlign: 'center', marginBottom: 24 }]}>Oyun türünü ve masanın rengini seç; gerçek oyuncuların katılmasını bekle.</Text><Button onPress={onCustom} secondary icon={<Plus size={18} color={C.text} />}>Masa oluştur</Button><Text style={[s.small, { marginTop: 18 }]}>Masa dört gerçek oyuncu katılınca başlar.</Text></View>
     </>}
 
     {page === 'stats' && <>
@@ -78,7 +78,6 @@ export default function Lobby({ page, profile, update, onStart, navigate, onCust
     {page === 'collection' && <View style={s.rooms}>{ROOMS.map(room => <Pressable accessibilityRole="button" accessibilityLabel={`${room.title} temasını seç`} accessibilityState={{ selected: profile.theme === room.theme }} key={room.theme} onPress={() => update({ theme: room.theme })} style={[s.infoPanel, { flex: 1, alignItems: 'center', overflow: 'hidden', borderColor: profile.theme === room.theme ? C.gold : C.border }]}><TableArt scale={.6} tone={room.theme} compact /><Text style={s.roomTitle}>{room.theme === 'green' ? 'Ceviz & keçe' : room.theme === 'plum' ? 'Mürdüm akşamı' : 'Gece mavisi'}</Text><View style={[s.inline, { marginTop: 16 }]}>{profile.theme === room.theme && <Check size={15} color={C.green} />}<Text style={[s.subtitle, { color: C.green }]}>{profile.theme === room.theme ? 'Seçili tema' : 'Temayı seç'}</Text></View></Pressable>)}</View>}
 
     {page === 'settings' && <View style={[s.infoPanel, { maxWidth: 740 }]}><Label color={C.gold}>MASADA SANA NE DİYELİM?</Label><TextInput accessibilityLabel="Oyuncu adı" value={name} onChangeText={v => { setName(v); setSaved(false); }} maxLength={18} placeholder="Oyuncu adın" placeholderTextColor={C.muted} style={s.nameInput} /><Button onPress={() => { update({ name: name.trim() || 'Misafir' }); setSaved(true); }} style={{ alignSelf: 'flex-start', marginBottom: 22 }} compact icon={saved ? <Check color={C.ink} size={16} /> : undefined}>{saved ? 'Kaydedildi' : 'Adını kaydet'}</Button>
-      {([{ label: 'Hızlı botlar', desc: 'Bilgisayar oyuncuları hamlelerini daha hızlı yapar.', key: 'quick' }] as const).map(item => <View key={item.key} style={s.settingRow}><View style={{ flex: 1 }}><Text style={s.settingTitle}>{item.label}</Text><Text style={[s.subtitle, { lineHeight: 20, marginTop: 5 }]}>{item.desc}</Text></View><Switch accessibilityLabel={item.label} value={profile[item.key]} onValueChange={value => update({ [item.key]: value })} trackColor={{ false: '#466157', true: '#8faa7c' }} thumbColor={C.text} /></View>)}
       <Pressable onPress={() => navigate('collection')} accessibilityRole="button" style={s.settingRow}><View><Text style={s.settingTitle}>Masa görünümü</Text><Text style={[s.subtitle, { marginTop: 5 }]}>Üç farklı atmosfer arasından seç.</Text></View><ChevronRight color={C.muted} size={20} /></Pressable><Button secondary onPress={onSignOut} style={{ alignSelf: 'flex-start', marginTop: 6 }}>Oturumu kapat</Button><Text style={[s.small, { marginTop: 22, lineHeight: 20 }]}>Keyif 101 · v1.0{ '\n' }Hesabınla giriş yaptığında profilin, ayarların ve istatistiklerin Supabase üzerinde saklanır.</Text>
     </View>}
 
@@ -89,7 +88,7 @@ export default function Lobby({ page, profile, update, onStart, navigate, onCust
       ['04', 'Okey, eksik parçan.', 'Göstergenin bir üst sayısı ve aynı rengi okeydir; 13’ten sonra 1 gelir. Okey her taşın yerine kullanılabilir. Yıldızlı sahte okey, gerçek okeyin renk ve sayı değerini taşır; serbest joker değildir.'],
       ['05', 'Masayı büyüt.', 'Elini açtıktan sonra bir taşını seçip masadaki uyumlu pere dokunarak taşı işleyebilirsin. Soldan taş almak için elin açık olmalı veya aldığın taşla hemen açabilmelisin.'],
       ['06', 'Son taş, en güzel an.', 'Son taşını sağa atınca el biter. Kazanan −101; açmamış oyuncu 202; açmış oyuncu elindeki sayıların toplamını yazar (eldeki okey 101). Taşlar biterse el beraberedir.'],
-    ].map(([num, title, desc]) => <View key={num} style={[s.infoPanel, { flexDirection: 'row', gap: 20 }]}><Text style={{ fontFamily: F.serif, fontSize: 27, color: C.gold }}>{num}</Text><View style={{ flex: 1 }}><Text style={s.settingTitle}>{title}</Text><Text style={[s.subtitle, { lineHeight: 23, marginTop: 8 }]}>{desc}</Text></View></View>)}<Text style={[s.small, { lineHeight: 21, marginTop: 7 }]}>Bu sürüm tek ellik, botlara karşı bir pratik oyunudur. Katlamalı/eşli oyun, işlek atma cezaları ve bitiş çarpanları uygulanmaz. Gerçek oyuncularla çevrimiçi eşleşme bulunmaz.</Text><Button onPress={() => onStart(ROOMS[0])} style={{ alignSelf: 'flex-start', marginTop: 12 }} icon={<ArrowRight color={C.ink} size={18} />}>Hazırım, oynayalım</Button></View>}
+    ].map(([num, title, desc]) => <View key={num} style={[s.infoPanel, { flexDirection: 'row', gap: 20 }]}><Text style={{ fontFamily: F.serif, fontSize: 27, color: C.gold }}>{num}</Text><View style={{ flex: 1 }}><Text style={s.settingTitle}>{title}</Text><Text style={[s.subtitle, { lineHeight: 23, marginTop: 8 }]}>{desc}</Text></View></View>)}<Text style={[s.small, { lineHeight: 21, marginTop: 7 }]}>Bu masa dört gerçek oyuncu katılınca başlar. Oyuncu eksikse sıra ilerlemez ve hiçbir koltuğa bilgisayar oyuncusu eklenmez.</Text><Button onPress={() => onStart(ROOMS[0])} style={{ alignSelf: 'flex-start', marginTop: 12 }} icon={<ArrowRight color={C.ink} size={18} />}>Masaya katıl</Button></View>}
 
     <View style={s.footer}><Text style={s.footerText}>KEYİF 101</Text><View style={{ width: 3, height: 3, backgroundColor: '#617c6f', borderRadius: 3 }} /><Text style={{ fontSize: 10, fontFamily: F.medium, color: '#94ac9d' }}>İyi oyun, iyi hissettirir.</Text></View>
   </ScrollView>;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeDeck, newGame, candidates, bestMelds, rackMelds, discard, draw, openMelds, botTurn, extendMeld, collectMelds, timeoutTurn, scores, validateMeld, validateTable, rearrangeTable, isJoker, face, jokerValue, NAMES, type Tile, type Game, type Color } from './engine';
+import { makeDeck, newGame, candidates, bestMelds, rackMelds, discard, draw, openMelds, extendMeld, collectMelds, timeoutTurn, scores, validateMeld, validateTable, rearrangeTable, isJoker, face, jokerValue, NAMES, type Tile, type Game, type Color } from './engine';
 let serial = 0;
 const t = (value: number, color: Color = 'red', fake = false): Tile => ({ id: `t-${serial++}`, value, color, fake });
 const indicator = t(12, 'yellow');
@@ -15,8 +15,8 @@ test('106 unique physical tiles and fair 22/21/21/21 deal, 20 in stock', () => {
   const deck = makeDeck(); assert.equal(deck.length, 106); assert.equal(deck.filter(t => t.fake).length, 2);
   const game = newGame(); assert.deepEqual(game.hands.map(h => h.length), [22, 21, 21, 21]); assert.equal(game.stock.length, 20); assert.equal(game.indicator.fake, undefined); invariant(game);
 });
-test('all bot seats use the requested GÜLAY name', () => {
-  assert.deepEqual(NAMES.slice(1), ['GÜLAY', 'GÜLAY', 'GÜLAY']);
+test('all non-host seats are real-player placeholders, never bot identities', () => {
+  assert.deepEqual(NAMES, ['Sen', 'Oyuncu 2', 'Oyuncu 3', 'Oyuncu 4']);
 });
 test('indicator wraps 13 to 1; true joker is wild, false joker has a fixed identity', () => {
   const show = t(13, 'blue'); assert.equal(jokerValue(show), 1); assert.ok(isJoker(t(1, 'blue'), show)); assert.ok(!isJoker(t(0, 'black', true), show));
@@ -184,20 +184,4 @@ test('timeout draws when needed, discards the smallest tile, and advances the tu
 });
 test('empty stock ends the game without inventing a winner', () => {
   const next = draw(fixture([t(3)], { stock: [], phase: 'draw' })); assert.equal(next.ended, true); assert.equal(next.winner, null);
-});
-test('30 deterministic games conserve every tile through complete bot turns', () => {
-  for (let seed = 1; seed <= 30; seed++) {
-    let rng = seed;
-    let game = newGame(seed % 2 ? 'classic' : 'pairs', () => { rng = (rng * 1664525 + 1013904223) >>> 0; return rng / 4294967296; });
-    let turns = 0;
-    while (!game.ended && turns++ < 120) {
-      if (game.turn === 0) {
-        if (game.phase === 'draw') game = draw(game);
-        if (!game.ended) { game = openMelds(game); game = discard(game, game.hands[0][0].id); }
-      } else game = botTurn(game);
-      invariant(game);
-      for (const meld of game.melds) assert.ok(candidates(meld.tiles, game.indicator, game.mode).some(c => c.tiles.length === meld.tiles.length));
-    }
-    assert.ok(game.ended); assert.ok(turns < 120);
-  }
 });

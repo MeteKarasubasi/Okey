@@ -1,5 +1,4 @@
 import {
-  botTurn,
   collectMelds,
   discard,
   draw,
@@ -43,6 +42,7 @@ type HibernatedWebSocket = WebSocket & {
 type RoomState = {
   roomId: string;
   game?: Game;
+  started?: boolean;
   reservations: Record<string, Reservation>;
   lastActivity: number;
   sequence: number;
@@ -133,13 +133,13 @@ export class RoomDurableObject implements DurableObject {
   private players() {
     return this.ctx.getWebSockets().map(socket => (socket as HibernatedWebSocket).deserializeAttachment()).filter((player): player is PlayerAttachment => Boolean(player));
   }
-  private connectedSeat(seat: number) { return this.players().some(player => player.seat === seat); }
+  private isStarted(state: RoomState) { return state.started === true || Boolean(state.game && this.players().length === MAX_PLAYERS); }
   private broadcast(state: RoomState) {
     if (!state.game) return;
     const players = this.players().map(player => ({ seat: player.seat }));
     for (const socket of this.ctx.getWebSockets()) {
       const player = (socket as HibernatedWebSocket).deserializeAttachment();
-      if (player) send(socket, { type: 'state', roomId: state.roomId, seat: player.seat, players, game: hiddenGame(state.game, player.seat), scoreSnapshot: scores(state.game) });
+      if (player) send(socket, { type: 'state', roomId: state.roomId, seat: player.seat, players, started: this.isStarted(state), game: hiddenGame(state.game, player.seat), scoreSnapshot: scores(state.game) });
     }
   }
   private async authenticate(message: ClientMessage) {
@@ -179,19 +179,17 @@ export class RoomDurableObject implements DurableObject {
     }
   }
   private async schedule(state: RoomState) {
-    if (!state.game || state.game.ended) return;
-    const humanTurn = this.connectedSeat(state.game.turn);
-    const wait = humanTurn ? Math.max(250, state.game.rules.turnTimeSeconds * 1000 - (Date.now() - state.game.turnStartedAt) + 250) : 1200;
+    if (!this.isStarted(state) || !state.game || state.game.ended) return;
+    const wait = Math.max(250, state.game.rules.turnTimeSeconds * 1000 - (Date.now() - state.game.turnStartedAt) + 250);
     await this.ctx.storage.setAlarm(Date.now() + wait);
   }
   async alarm() {
     const state = await this.load();
-    if (!state.game || state.game.ended) return;
+    if (!this.isStarted(state) || !state.game || state.game.ended) return;
     const turn = state.game.turn;
-    const humanTurn = this.connectedSeat(turn);
     const deadlinePassed = Date.now() - state.game.turnStartedAt >= state.game.rules.turnTimeSeconds * 1000;
-    if (state.game.turn !== turn || (humanTurn && !deadlinePassed)) return this.schedule(state);
-    state.game = humanTurn ? timeoutTurn(state.game) : botTurn(state.game);
+    if (state.game.turn !== turn || !deadlinePassed) return this.schedule(state);
+    state.game = timeoutTurn(state.game);
     state.sequence += 1;
     await this.save(state);
     this.broadcast(state);
@@ -235,6 +233,7 @@ export class RoomDurableObject implements DurableObject {
         if (state.game) return error(socket, 'Bu oda zaten oluşturuldu.');
         state.roomId = this.roomId || roomId();
         state.game = newGame(message.mode === 'pairs' ? 'pairs' : 'classic');
+        state.started = false;
         state.reservations = {};
         const player: PlayerAttachment = { userId: identity, seat: 0, timestamps: [] };
         socket.serializeAttachment(player);
@@ -242,7 +241,7 @@ export class RoomDurableObject implements DurableObject {
         await this.createDatabaseRoom(state, player);
         send(socket, { type: 'ready', roomId: state.roomId, seat: 0 });
         this.broadcast(state);
-        return this.schedule(state);
+        return;
       }
       if (message.type !== 'join') return error(socket, 'Önce bir canlı odaya katılmalısın.');
       if (!state.game) return error(socket, 'Bu canlı oda bulunamadı.');
@@ -256,6 +255,10 @@ export class RoomDurableObject implements DurableObject {
       delete state.reservations[identity];
       const player: PlayerAttachment = { userId: identity, seat, timestamps: [] };
       socket.serializeAttachment(player);
+      if (activePlayers.length + 1 === MAX_PLAYERS) {
+        state.started = true;
+        state.game.turnStartedAt = Date.now();
+      }
       await this.save(state);
       if (state.dbId && this.env.SUPABASE_SERVICE_ROLE_KEY && this.env.SUPABASE_URL) await fetch(`${this.env.SUPABASE_URL}/rest/v1/game_players`, { method: 'POST', headers: { apikey: this.env.SUPABASE_SERVICE_ROLE_KEY, authorization: `Bearer ${this.env.SUPABASE_SERVICE_ROLE_KEY}`, 'content-type': 'application/json' }, body: JSON.stringify({ game_id: state.dbId, player_id: identity, seat }) });
       send(socket, { type: 'ready', roomId: state.roomId, seat });
@@ -264,6 +267,7 @@ export class RoomDurableObject implements DurableObject {
     }
     if (message.type !== 'action') return error(socket, 'Bilinmeyen mesaj türü.');
     if (!state.game) return error(socket, 'Önce bir canlı odaya katılmalısın.');
+    if (!this.isStarted(state)) return error(socket, 'Masa dört gerçek oyuncunun katılmasını bekliyor.');
     const action = current;
     if (!allowedAction(message.action)) return error(socket, 'Geçersiz hamle türü.');
     const payload = message.payload && typeof message.payload === 'object' && !Array.isArray(message.payload) ? message.payload : {};
