@@ -5,6 +5,7 @@
     "version": "1.0.0",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#102e29",
+    "experiments": { "baseUrl": "/Okey" },
     "web": { "bundler": "metro", "name": "Keyif 101 · Bir el daha?", "shortName": "Keyif 101", "themeColor": "#102e29" }
   }
 }

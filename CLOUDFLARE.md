@@ -19,6 +19,6 @@ npx wrangler secret put SUPABASE_URL
 npx wrangler deploy
 ```
 
-Canlı web build’inde `EXPO_PUBLIC_GAME_WS_URL` değerini Worker adresine `wss://...workers.dev` olarak ayarla. `GAME_ALLOWED_ORIGINS` değerini de yalnızca gerçek web adreslerini içerecek şekilde Wrangler ortam değişkeni olarak tanımla.
+GitHub Pages web build’i `https://metekarasubasi.github.io/Okey/` adresini kullanır. GitHub Actions içindeki `EXPO_PUBLIC_GAME_WS_URL` Worker adresine ayarlanmıştır. Yeni bir canlı domain kullanırsan `GAME_ALLOWED_ORIGINS` değerine o domainin origin’ini ekle.
 
 Worker erişim tokenını Supabase üzerinden doğrular; istemcinin gönderdiği `userId` yetki kanıtı olarak kullanılmaz. Service role anahtarı yalnızca Cloudflare secret olarak tutulur.

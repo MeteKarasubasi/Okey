@@ -15,7 +15,7 @@
   "vars": {
     "GAME_WS_AUTH_REQUIRED": "true",
     "ENVIRONMENT": "production",
-    "GAME_ALLOWED_ORIGINS": "http://localhost:8081"
+    "GAME_ALLOWED_ORIGINS": "http://localhost:8081,https://metekarasubasi.github.io"
   },
   "observability": { "enabled": true }
 }
