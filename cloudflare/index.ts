@@ -1,8 +1,11 @@
 import {
   collectMelds,
+  bestMelds,
   discard,
   draw,
   extendMeld,
+  face,
+  isJoker,
   newGame,
   openMelds,
   rearrangeTable,
@@ -26,7 +29,7 @@ export type Env = {
 };
 
 type ClientMessage = {
-  type: 'create' | 'join' | 'action' | 'ping';
+  type: 'create' | 'join' | 'action' | 'bot' | 'ping';
   mode?: Mode;
   accessToken?: string;
   userId?: string;
@@ -34,7 +37,7 @@ type ClientMessage = {
   payload?: Record<string, unknown>;
 };
 type Reservation = { seat: number; expiresAt: number };
-type PlayerAttachment = { userId: string; seat: number; timestamps: number[] };
+type PlayerAttachment = { userId: string; seat: number; timestamps: number[]; isBot?: boolean; name?: string };
 type HibernatedWebSocket = WebSocket & {
   serializeAttachment(attachment: PlayerAttachment): void;
   deserializeAttachment(): PlayerAttachment | null;
@@ -46,6 +49,7 @@ type RoomState = {
   countdownEndsAt?: number;
   startingUntil?: number;
   resultUntil?: number;
+  bots: PlayerAttachment[];
   reservations: Record<string, Reservation>;
   lastActivity: number;
   sequence: number;
@@ -75,6 +79,23 @@ function origins(env: Env) { return new Set((env.GAME_ALLOWED_ORIGINS ?? '').spl
 
 function hiddenGame(game: Game, seat: number): Game {
   return { ...game, hands: game.hands.map((hand, index) => index === seat ? hand : hand.map((_, tileIndex) => ({ id: `hidden-${index}-${tileIndex}`, color: 'black', value: 0 }))) };
+}
+function botMove(game: Game, seat: number): Game {
+  let next = game;
+  if (next.phase === 'draw') next = draw(next);
+  if (next.ended) return next;
+  if (!next.opened[seat]) {
+    const planned = bestMelds(next.hands[seat], next.indicator, next.mode, true);
+    const score = planned.reduce((total, meld) => total + meld.score, 0);
+    if (planned.length && score >= next.rules.openingThreshold) next = openMelds(next, planned);
+  }
+  if (next.ended || next.phase !== 'discard') return next;
+  const tile = [...next.hands[seat]].sort((a, b) => {
+    const av = isJoker(a, next.indicator) ? 1000 : face(a, next.indicator).value;
+    const bv = isJoker(b, next.indicator) ? 1000 : face(b, next.indicator).value;
+    return bv - av || b.id.localeCompare(a.id);
+  })[0];
+  return tile ? discard(next, tile.id) : next;
 }
 function send(socket: WebSocket, message: Record<string, unknown>) {
   try { socket.send(JSON.stringify(message)); } catch { /* closed socket */ }
@@ -124,22 +145,24 @@ export class RoomDurableObject implements DurableObject {
   private roomId = '';
 
   constructor(private ctx: DurableObjectState, private env: Env) {
-    this.statePromise = ctx.storage.get<RoomState>('room').then(saved => saved ?? { roomId: '', reservations: {}, lastActivity: Date.now(), sequence: 0 });
+    this.statePromise = ctx.storage.get<RoomState>('room').then(saved => saved ?? { roomId: '', reservations: {}, bots: [], lastActivity: Date.now(), sequence: 0 });
   }
 
   private async load() {
     const state = await this.statePromise;
     if (!this.roomId) this.roomId = state.roomId;
+    state.bots ??= [];
     return state;
   }
   private async save(state: RoomState) { state.lastActivity = Date.now(); await this.ctx.storage.put('room', state); }
   private players() {
     return this.ctx.getWebSockets().map(socket => (socket as HibernatedWebSocket).deserializeAttachment()).filter((player): player is PlayerAttachment => Boolean(player));
   }
-  private isStarted(state: RoomState) { return state.started === true || Boolean(state.game && !state.countdownEndsAt && !state.startingUntil && this.players().length === MAX_PLAYERS); }
+  private participants(state: RoomState) { return [...this.players(), ...(state.bots ?? [])]; }
+  private isStarted(state: RoomState) { return state.started === true || Boolean(state.game && !state.countdownEndsAt && !state.startingUntil && this.participants(state).length === MAX_PLAYERS); }
   private broadcast(state: RoomState) {
     if (!state.game) return;
-    const players = this.players().map(player => ({ seat: player.seat }));
+    const players = this.participants(state).map(player => ({ seat: player.seat, isBot: player.isBot, name: player.name }));
     for (const socket of this.ctx.getWebSockets()) {
       const player = (socket as HibernatedWebSocket).deserializeAttachment();
       if (player) send(socket, { type: 'state', roomId: state.roomId, seat: player.seat, players, started: this.isStarted(state), countdownEndsAt: state.countdownEndsAt ?? null, startingUntil: state.startingUntil ?? null, resultUntil: state.resultUntil ?? null, game: hiddenGame(state.game, player.seat), scoreSnapshot: scores(state.game) });
@@ -164,8 +187,10 @@ export class RoomDurableObject implements DurableObject {
       state.roundSaved = true;
       await this.save(state);
       await fetch(`${base}/rest/v1/game_rounds`, { method: 'POST', headers: { ...headers, Prefer: 'resolution=merge-duplicates' }, body: JSON.stringify({ game_id: state.dbId, round_no: 1, status: 'finished', winner_seat: state.game.winner, finish_type: state.game.finishType, score_snapshot: scores(state.game), finished_at: new Date().toISOString() }) });
-      const reward = state.game.mode === 'pairs' ? 750 : 500;
-      for (const participant of this.players()) await fetch(`${base}/rest/v1/rpc/record_server_result`, { method: 'POST', headers, body: JSON.stringify({ target_user_id: participant.userId, did_win: state.game.winner === participant.seat, reward: state.game.winner === participant.seat ? reward : 0 }) });
+      if (!state.bots.length) {
+        const reward = state.game.mode === 'pairs' ? 750 : 500;
+        for (const participant of this.players()) await fetch(`${base}/rest/v1/rpc/record_server_result`, { method: 'POST', headers, body: JSON.stringify({ target_user_id: participant.userId, did_win: state.game.winner === participant.seat, reward: state.game.winner === participant.seat ? reward : 0 }) });
+      }
     }
   }
   private async createDatabaseRoom(state: RoomState, player: PlayerAttachment) {
@@ -206,7 +231,7 @@ export class RoomDurableObject implements DurableObject {
       state.game = newGame(state.game.mode);
       state.roundSaved = false;
       state.started = false;
-      state.countdownEndsAt = this.players().length === MAX_PLAYERS ? Date.now() + 10_000 : undefined;
+      state.countdownEndsAt = this.participants(state).length === MAX_PLAYERS ? Date.now() + 10_000 : undefined;
       state.startingUntil = undefined;
       await this.save(state);
       this.broadcast(state);
@@ -214,11 +239,15 @@ export class RoomDurableObject implements DurableObject {
       return this.schedule(state);
     }
     if (!this.isStarted(state)) {
-      if (this.players().length < MAX_PLAYERS) { state.countdownEndsAt = undefined; state.startingUntil = undefined; await this.save(state); this.broadcast(state); return; }
+      if (this.participants(state).length < MAX_PLAYERS) { state.countdownEndsAt = undefined; state.startingUntil = undefined; await this.save(state); this.broadcast(state); return; }
       if (state.countdownEndsAt && Date.now() >= state.countdownEndsAt) { state.countdownEndsAt = undefined; state.startingUntil = Date.now() + 1000; await this.save(state); this.broadcast(state); return this.schedule(state); }
       if (state.startingUntil && Date.now() >= state.startingUntil) { state.startingUntil = undefined; state.started = true; state.game.turnStartedAt = Date.now(); await this.save(state); this.broadcast(state); return this.schedule(state); }
       return this.schedule(state);
-      return;
+    }
+    if (state.bots.some(bot => bot.seat === state.game!.turn)) {
+      state.game = botMove(state.game, state.game!.turn);
+      state.sequence += 1;
+      await this.save(state); this.broadcast(state); await this.persistence(state); return this.schedule(state);
     }
     const turn = state.game.turn;
     const deadlinePassed = Date.now() - state.game.turnStartedAt >= state.game.rules.turnTimeSeconds * 1000;
@@ -271,6 +300,7 @@ export class RoomDurableObject implements DurableObject {
         state.countdownEndsAt = undefined;
         state.startingUntil = undefined;
         state.resultUntil = undefined;
+        state.bots = [];
         state.reservations = {};
         const player: PlayerAttachment = { userId: identity, seat: 0, timestamps: [] };
         socket.serializeAttachment(player);
@@ -286,22 +316,27 @@ export class RoomDurableObject implements DurableObject {
       if (activePlayers.some(player => player.userId === identity)) return error(socket, 'Bu kullanıcı zaten odada.');
       for (const [userId, reservation] of Object.entries(state.reservations)) if (reservation.expiresAt <= Date.now()) delete state.reservations[userId];
       const reserved = state.reservations[identity];
-      const used = new Set(activePlayers.map(player => player.seat));
+      const used = new Set([...activePlayers, ...(state.bots ?? [])].map(player => player.seat));
       const seat = reserved && !used.has(reserved.seat) ? reserved.seat : [0, 1, 2, 3].find(candidate => !used.has(candidate));
-      if (seat === undefined || activePlayers.length >= MAX_PLAYERS) return error(socket, 'Oda dolu.');
+      if (seat === undefined || this.participants(state).length >= MAX_PLAYERS) return error(socket, 'Oda dolu.');
       delete state.reservations[identity];
       const player: PlayerAttachment = { userId: identity, seat, timestamps: [] };
       socket.serializeAttachment(player);
-      if (activePlayers.length + 1 === MAX_PLAYERS) {
-        state.started = false;
-        state.startingUntil = undefined;
-        state.countdownEndsAt = Date.now() + 10_000;
-      }
+      if (this.participants(state).length === MAX_PLAYERS) { state.started = false; state.startingUntil = undefined; state.countdownEndsAt = Date.now() + 10_000; }
       await this.save(state);
       if (state.dbId && this.env.SUPABASE_SERVICE_ROLE_KEY && this.env.SUPABASE_URL) await fetch(`${this.env.SUPABASE_URL}/rest/v1/game_players`, { method: 'POST', headers: { apikey: this.env.SUPABASE_SERVICE_ROLE_KEY, authorization: `Bearer ${this.env.SUPABASE_SERVICE_ROLE_KEY}`, 'content-type': 'application/json' }, body: JSON.stringify({ game_id: state.dbId, player_id: identity, seat }) });
       send(socket, { type: 'ready', roomId: state.roomId, seat });
       this.broadcast(state);
       return this.schedule(state);
+    }
+    if (message.type === 'bot') {
+      if (current.seat !== 0) return error(socket, 'Botları yalnızca masa sahibi çağırabilir.');
+      if (state.started || state.countdownEndsAt || state.startingUntil) return error(socket, 'Oyun başladıktan sonra bot çağrılamaz.');
+      if (state.bots.length) return error(socket, 'Bu masada botlar zaten hazır.');
+      const used = new Set(this.players().map(player => player.seat));
+      state.bots = [0, 1, 2, 3].filter(seat => !used.has(seat)).map(seat => ({ userId: `bot-gulay-${seat}`, seat, isBot: true, name: 'GÜLAY', timestamps: [] }));
+      state.countdownEndsAt = this.participants(state).length === MAX_PLAYERS ? Date.now() + 10_000 : undefined;
+      await this.save(state); this.broadcast(state); return this.schedule(state);
     }
     if (message.type !== 'action') return error(socket, 'Bilinmeyen mesaj türü.');
     if (!state.game) return error(socket, 'Önce bir canlı odaya katılmalısın.');
@@ -326,7 +361,7 @@ export class RoomDurableObject implements DurableObject {
     if (!player) return;
     const state = await this.load();
     state.reservations[player.userId] = { seat: player.seat, expiresAt: Date.now() + RESERVATION_TTL_MS };
-    if (!state.started && this.players().length < MAX_PLAYERS) {
+    if (!state.started && this.participants(state).length < MAX_PLAYERS) {
       state.countdownEndsAt = undefined;
       state.startingUntil = undefined;
     }

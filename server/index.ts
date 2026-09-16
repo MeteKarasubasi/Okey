@@ -1,12 +1,12 @@
 import 'dotenv/config';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { WebSocketServer, WebSocket, type RawData } from 'ws';
-import { collectMelds, discard, draw, extendMeld, newGame, openMelds, rearrangeTable, scores, timeoutTurn, type Game, type Meld, type Mode, type Tile } from '../src/game/engine';
+import { bestMelds, collectMelds, discard, draw, extendMeld, face, isJoker, newGame, openMelds, rearrangeTable, scores, timeoutTurn, type Game, type Meld, type Mode, type Tile } from '../src/game/engine';
 
-type ClientMessage = { type: 'create' | 'join' | 'action' | 'ping'; roomId?: string; accessToken?: string; userId?: string; mode?: Mode; action?: string; payload?: Record<string, unknown> };
-type Player = { ws: WebSocket; userId: string; seat: number };
+type ClientMessage = { type: 'create' | 'join' | 'action' | 'bot' | 'ping'; roomId?: string; accessToken?: string; userId?: string; mode?: Mode; action?: string; payload?: Record<string, unknown> };
+type Player = { ws: WebSocket | null; userId: string; seat: number; isBot?: boolean; name?: string };
 type Reservation = { seat: number; expiresAt: number };
-type Room = { id: string; game: Game; started: boolean; countdownEndsAt?: number; startingUntil?: number; resultUntil?: number; players: Map<WebSocket, Player>; reserved: Map<string, Reservation>; lastActivity: number; sequence: number; dbId?: string; roundSaved?: boolean; timer?: NodeJS.Timeout };
+type Room = { id: string; game: Game; started: boolean; countdownEndsAt?: number; startingUntil?: number; resultUntil?: number; players: Map<WebSocket, Player>; bots: Player[]; reserved: Map<string, Reservation>; lastActivity: number; sequence: number; dbId?: string; roundSaved?: boolean; timer?: NodeJS.Timeout };
 type ClientMeta = { ip: string; timestamps: number[] };
 
 const port = Number(process.env.GAME_WS_PORT ?? 8787);
@@ -32,13 +32,14 @@ if (production && !process.env.SUPABASE_SERVICE_ROLE_KEY) throw new Error('Produ
 function roomId() { return globalThis.crypto.randomUUID().replaceAll('-', '').slice(0, 12).toUpperCase(); }
 function send(ws: WebSocket, message: Record<string, unknown>) { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message)); }
 function fail(ws: WebSocket, message: string) { send(ws, { type: 'error', message }); }
-function playersFor(room: Room) { return [...room.players.values()].map(player => ({ seat: player.seat })); }
+function playersFor(room: Room) { return [...room.players.values(), ...room.bots].map(player => ({ seat: player.seat, isBot: player.isBot, name: player.name })); }
+function participantCount(room: Room) { return room.players.size + room.bots.length; }
 function hiddenGame(game: Game, seat: number): Game {
   return { ...game, hands: game.hands.map((hand, index) => index === seat ? hand : hand.map((_, tileIndex) => ({ id: `hidden-${index}-${tileIndex}`, color: 'black', value: 0 }))) };
 }
 function broadcast(room: Room) {
   const players = playersFor(room);
-  for (const player of room.players.values()) send(player.ws, { type: 'state', roomId: room.id, seat: player.seat, players, started: room.started, countdownEndsAt: room.countdownEndsAt ?? null, startingUntil: room.startingUntil ?? null, resultUntil: room.resultUntil ?? null, game: hiddenGame(room.game, player.seat), scoreSnapshot: scores(room.game) });
+  for (const player of room.players.values()) if (player.ws) send(player.ws, { type: 'state', roomId: room.id, seat: player.seat, players, started: room.started, countdownEndsAt: room.countdownEndsAt ?? null, startingUntil: room.startingUntil ?? null, resultUntil: room.resultUntil ?? null, game: hiddenGame(room.game, player.seat), scoreSnapshot: scores(room.game) });
 }
 async function persistRoom(room: Room, actor?: Player, action?: string, payload: Record<string, unknown> = {}) {
   if (!adminClient || !room.dbId) return;
@@ -48,8 +49,10 @@ async function persistRoom(room: Room, actor?: Player, action?: string, payload:
   if (room.game.ended && !room.roundSaved) {
     room.roundSaved = true;
     await adminClient.from('game_rounds').upsert({ game_id: room.dbId, round_no: 1, status: 'finished', winner_seat: room.game.winner, finish_type: room.game.finishType, score_snapshot: scores(room.game), finished_at: new Date().toISOString() }, { onConflict: 'game_id,round_no' });
-    const reward = room.game.mode === 'pairs' ? 750 : 500;
-    for (const player of room.players.values()) await adminClient.rpc('record_server_result', { target_user_id: player.userId, did_win: room.game.winner === player.seat, reward: room.game.winner === player.seat ? reward : 0 });
+    if (!room.bots.length) {
+      const reward = room.game.mode === 'pairs' ? 750 : 500;
+      for (const player of room.players.values()) await adminClient.rpc('record_server_result', { target_user_id: player.userId, did_win: room.game.winner === player.seat, reward: room.game.winner === player.seat ? reward : 0 });
+    }
   }
 }
 async function createPersistentRoom(room: Room, host: Player) {
@@ -72,7 +75,7 @@ function scheduleRoom(room: Room) {
       room.roundSaved = false;
       room.started = false;
       room.startingUntil = undefined;
-      room.countdownEndsAt = room.players.size === 4 ? Date.now() + 10_000 : undefined;
+      room.countdownEndsAt = participantCount(room) === 4 ? Date.now() + 10_000 : undefined;
       broadcast(room);
       void persistRoom(room);
       scheduleRoom(room);
@@ -83,12 +86,36 @@ function scheduleRoom(room: Room) {
     if (!room.countdownEndsAt && !room.startingUntil) return;
     const until = room.startingUntil ?? room.countdownEndsAt!;
     room.timer = setTimeout(() => {
-      if (room.players.size < 4) { room.countdownEndsAt = undefined; room.startingUntil = undefined; broadcast(room); return; }
+      if (participantCount(room) < 4) { room.countdownEndsAt = undefined; room.startingUntil = undefined; broadcast(room); return; }
       if (room.countdownEndsAt) {
         room.countdownEndsAt = undefined; room.startingUntil = Date.now() + 1000; broadcast(room); scheduleRoom(room); return;
       }
       room.startingUntil = undefined; room.started = true; room.game.turnStartedAt = Date.now(); broadcast(room); scheduleRoom(room);
     }, Math.max(100, until - Date.now()));
+    return;
+  }
+  const bot = room.bots.find(player => player.seat === room.game.turn);
+  if (bot) {
+    const turn = room.game.turn;
+    room.timer = setTimeout(() => {
+      if (room.game.ended || room.game.turn !== turn) return scheduleRoom(room);
+      let next = room.game;
+      if (next.phase === 'draw') next = draw(next);
+      if (!next.ended && next.phase === 'discard' && !next.opened[turn]) {
+        const planned = bestMelds(next.hands[turn], next.indicator, next.mode, true);
+        const score = planned.reduce((total, meld) => total + meld.score, 0);
+        if (planned.length && score >= next.rules.openingThreshold) next = openMelds(next, planned);
+      }
+      if (!next.ended && next.phase === 'discard') {
+        const discardTile = [...next.hands[turn]].sort((a, b) => {
+          const av = isJoker(a, next.indicator) ? 1000 : face(a, next.indicator).value;
+          const bv = isJoker(b, next.indicator) ? 1000 : face(b, next.indicator).value;
+          return bv - av || b.id.localeCompare(a.id);
+        })[0];
+        if (discardTile) next = discard(next, discardTile.id);
+      }
+      room.game = next; room.lastActivity = Date.now(); broadcast(room); void persistRoom(room); scheduleRoom(room);
+    }, 700);
     return;
   }
   const turn = room.game.turn;
@@ -166,13 +193,14 @@ function joinRoom(ws: WebSocket, id: string, userId: string) {
   trimReservations(room);
   if ([...room.players.values()].some(player => player.userId === userId)) return fail(ws, 'Bu kullanıcı zaten odada.');
   const reserved = room.reserved.get(userId);
-  const usedSeats = new Set([...room.players.values()].map(player => player.seat));
+  if (participantCount(room) >= 4) return fail(ws, 'Oda dolu.');
+  const usedSeats = new Set([...room.players.values(), ...room.bots].map(player => player.seat));
   const seat = reserved && !usedSeats.has(reserved.seat) ? reserved.seat : [0, 1, 2, 3].find(candidate => !usedSeats.has(candidate));
   if (seat === undefined) return fail(ws, 'Oda dolu.');
   room.reserved.delete(userId);
   const player = { ws, userId, seat };
   room.players.set(ws, player); roomBySocket.set(ws, room); room.lastActivity = Date.now();
-  if (!room.started && room.players.size === 4 && !room.countdownEndsAt && !room.startingUntil) room.countdownEndsAt = Date.now() + 10_000;
+  if (!room.started && participantCount(room) === 4 && !room.countdownEndsAt && !room.startingUntil) room.countdownEndsAt = Date.now() + 10_000;
   if (adminClient && room.dbId) void adminClient.from('game_players').insert({ game_id: room.dbId, player_id: userId, seat });
   send(ws, { type: 'ready', roomId: room.id, seat }); broadcast(room); scheduleRoom(room);
 }
@@ -189,7 +217,7 @@ async function handleMessage(ws: WebSocket, raw: RawData) {
   if (message.type === 'create') {
     if (rooms.size >= maxRooms) return fail(ws, 'Sunucu şu anda yeni oda kabul etmiyor.');
     const id = roomId();
-  const room: Room = { id, game: newGame(message.mode === 'pairs' ? 'pairs' : 'classic'), started: false, players: new Map(), reserved: new Map(), lastActivity: Date.now(), sequence: 0 };
+    const room: Room = { id, game: newGame(message.mode === 'pairs' ? 'pairs' : 'classic'), started: false, players: new Map(), bots: [], reserved: new Map(), lastActivity: Date.now(), sequence: 0 };
     rooms.set(id, room);
     const player = { ws, userId: identity, seat: 0 };
     room.players.set(ws, player); roomBySocket.set(ws, room);
@@ -197,10 +225,19 @@ async function handleMessage(ws: WebSocket, raw: RawData) {
     send(ws, { type: 'ready', roomId: id, seat: 0 }); broadcast(room); return;
   }
   if (message.type === 'join') return isSafeRoomId(message.roomId) ? joinRoom(ws, message.roomId, identity) : fail(ws, 'Geçersiz oda kodu.');
-  if (message.type !== 'action') return fail(ws, 'Bilinmeyen mesaj türü.');
   const room = roomBySocket.get(ws);
   if (!room) return fail(ws, 'Önce bir canlı odaya katılmalısın.');
   const player = room.players.get(ws)!;
+  if (message.type === 'bot') {
+    if (player.seat !== 0) return fail(ws, 'Botları yalnızca masa sahibi çağırabilir.');
+    if (room.started || room.countdownEndsAt || room.startingUntil) return fail(ws, 'Oyun başladıktan sonra bot çağrılamaz.');
+    if (room.bots.length) return fail(ws, 'Bu masada botlar zaten hazır.');
+    const usedSeats = new Set([...room.players.values()].map(item => item.seat));
+    room.bots = [0, 1, 2, 3].filter(seat => !usedSeats.has(seat)).map(seat => ({ ws: null, userId: `bot-gulay-${seat}`, seat, isBot: true, name: 'GÜLAY' }));
+    room.countdownEndsAt = participantCount(room) === 4 ? Date.now() + 10_000 : undefined;
+    broadcast(room); scheduleRoom(room); return;
+  }
+  if (message.type !== 'action') return fail(ws, 'Bilinmeyen mesaj türü.');
   if (!isAllowedAction(message.action)) return fail(ws, 'Geçersiz hamle türü.');
   const payload = message.payload && typeof message.payload === 'object' && !Array.isArray(message.payload) ? message.payload : {};
   const payloadError = validatePayload(message.action, payload);

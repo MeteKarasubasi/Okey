@@ -41,12 +41,14 @@ export default function App() {
   const [onlineRoomId, setOnlineRoomId] = useState<string | undefined>();
   const [onlineActive, setOnlineActive] = useState(false);
   const [onlineStarted, setOnlineStarted] = useState(false);
-  const [onlinePlayers, setOnlinePlayers] = useState<{ seat: number }[]>([]);
+  const [onlinePlayers, setOnlinePlayers] = useState<{ seat: number; isBot?: boolean; name?: string }[]>([]);
+  const [onlineHasBot, setOnlineHasBot] = useState(false);
   const [onlineCountdownEndsAt, setOnlineCountdownEndsAt] = useState<number | null>(null);
   const [onlineStartingUntil, setOnlineStartingUntil] = useState<number | null>(null);
   const [onlineResultUntil, setOnlineResultUntil] = useState<number | null>(null);
   const [remoteRoundScores, setRemoteRoundScores] = useState<number[] | null>(null);
   const onlineRef = useRef<GameConnection | null>(null);
+  const entryCharged = useRef(false);
   const recorded = useRef(false);
   const update = (patch: Partial<Profile>) => setProfile(current => ({ ...current, ...patch }));
   const start = (newRoom: Room, resetMatch = true, chargeEntry = true) => {
@@ -54,9 +56,10 @@ export default function App() {
     recorded.current = false;
     onlineRef.current?.close();
     onlineRef.current = null;
-    setOnlineActive(false); setOnlineSeat(null); setOnlineRoomId(undefined); setOnlineStarted(false); setOnlinePlayers([]); setOnlineCountdownEndsAt(null); setOnlineStartingUntil(null); setOnlineResultUntil(null); setRemoteRoundScores(null);
+    entryCharged.current = false;
+    setOnlineActive(false); setOnlineSeat(null); setOnlineRoomId(undefined); setOnlineStarted(false); setOnlinePlayers([]); setOnlineHasBot(false); setOnlineCountdownEndsAt(null); setOnlineStartingUntil(null); setOnlineResultUntil(null); setRemoteRoundScores(null);
     if (resetMatch) { setMatchRound(1); setMatchScores([0, 0, 0, 0]); }
-    if (chargeEntry) setProfile(current => ({ ...current, coins: current.coins - newRoom.entryFee }));
+    if (chargeEntry && !gameServerUrl) { entryCharged.current = true; setProfile(current => ({ ...current, coins: current.coins - newRoom.entryFee })); }
     setRemoteGameId(undefined);
     setRoom(newRoom); setGame(null); setModal(null);
     void createGameSession(auth.user?.id, newRoom, rulesFor(newRoom.mode)).then(id => {
@@ -65,12 +68,12 @@ export default function App() {
     });
     if (!gameServerUrl) { setWalletNotice('Canlı oyun sunucusu yapılandırılmamış. Masa açılamadı.'); setModal('notifications'); return; }
     const requestedRoomId = typeof window === 'undefined' ? undefined : new URLSearchParams(window.location.search).get('room')?.toUpperCase();
-    void connectGameServer({ roomId: requestedRoomId, mode: newRoom.mode, userId: auth.user?.id, accessToken: auth.session?.access_token, onReady: ready => { setOnlineSeat(ready.seat); setOnlineRoomId(ready.roomId); setOnlineActive(true); }, onState: state => { setGame(state.game); setOnlineSeat(state.seat); setOnlineRoomId(state.roomId); setOnlineStarted(state.started); setOnlinePlayers(state.players); setOnlineCountdownEndsAt(state.countdownEndsAt); setOnlineStartingUntil(state.startingUntil); setOnlineResultUntil(state.resultUntil); setRemoteRoundScores(state.scoreSnapshot); setOnlineActive(true); }, onError: message => { onlineRef.current = null; setOnlineActive(false); setGame(null); setWalletNotice(message); setModal('notifications'); } }).then(connection => { onlineRef.current = connection; }).catch(() => { setGame(null); });
+    void connectGameServer({ roomId: requestedRoomId, mode: newRoom.mode, userId: auth.user?.id, accessToken: auth.session?.access_token, onReady: ready => { setOnlineSeat(ready.seat); setOnlineRoomId(ready.roomId); setOnlineActive(true); }, onState: state => { const hasBot = state.players.some(player => player.isBot); setGame(state.game); setOnlineSeat(state.seat); setOnlineRoomId(state.roomId); setOnlineStarted(state.started); setOnlinePlayers(state.players); setOnlineHasBot(hasBot); setOnlineCountdownEndsAt(state.countdownEndsAt); setOnlineStartingUntil(state.startingUntil); setOnlineResultUntil(state.resultUntil); setRemoteRoundScores(state.scoreSnapshot); setOnlineActive(true); if (hasBot && entryCharged.current) { entryCharged.current = false; setProfile(current => ({ ...current, coins: current.coins + newRoom.entryFee })); } else if (!hasBot && state.players.length === 4 && chargeEntry && !entryCharged.current) { entryCharged.current = true; setProfile(current => ({ ...current, coins: current.coins - newRoom.entryFee })); } }, onError: message => { onlineRef.current = null; setOnlineActive(false); setGame(null); setWalletNotice(message); setModal('notifications'); } }).then(connection => { onlineRef.current = connection; }).catch(() => { setGame(null); });
   };
   const nextRound = () => {
     if (!game) return;
     onlineRef.current?.close(); onlineRef.current = null;
-    setOnlineActive(false); setOnlineRoomId(undefined); setOnlineSeat(null); setOnlineStarted(false); setOnlinePlayers([]); setOnlineCountdownEndsAt(null); setOnlineStartingUntil(null); setOnlineResultUntil(null); setGame(null); setPage('lobby');
+    setOnlineActive(false); setOnlineRoomId(undefined); setOnlineSeat(null); setOnlineStarted(false); setOnlinePlayers([]); setOnlineHasBot(false); setOnlineCountdownEndsAt(null); setOnlineStartingUntil(null); setOnlineResultUntil(null); setGame(null); setPage('lobby');
   };
   const exit = () => { if (game?.ended) { onlineRef.current?.close(); onlineRef.current = null; setOnlineActive(false); setGame(null); setPage('lobby'); } else setModal('exit'); };
   const navigate = (next: Page) => { setPage(next); };
@@ -82,9 +85,9 @@ export default function App() {
       void saveRoundResult(remoteGameId, matchRound, game.winner, game.finishType, roundScores);
       void appendGameAction(remoteGameId, auth.user?.id, 'ROUND_FINISHED', { round: matchRound, winner: game.winner, finishType: game.finishType, scores: roundScores });
       if (matchRound >= game.rules.roundCount) void finishGameSession(remoteGameId, true);
-      setProfile(p => ({ ...p, games: p.games + 1, wins: p.wins + (game.winner === 0 ? 1 : 0), coins: p.coins + (game.winner === 0 ? room.reward : 0) }));
+      setProfile(p => ({ ...p, games: p.games + 1, wins: p.wins + (game.winner === 0 ? 1 : 0), coins: onlineHasBot ? p.coins : p.coins + (game.winner === 0 ? room.reward : 0) }));
     }
-  }, [game?.ended, onlineActive, remoteRoundScores]);
+  }, [game?.ended, onlineActive, onlineHasBot, remoteRoundScores]);
   useEffect(() => {
     document.title = game ? `${room.title} · Keyif 101` : 'Keyif 101 · Bir el daha?';
     document.documentElement.lang = 'tr';
@@ -98,9 +101,9 @@ export default function App() {
     setProfile(p => p.lastBonus === todayKey() ? p : { ...p, coins: p.coins + 750, lastBonus: todayKey() }); setModal('bonus');
   };
   if ((!fontsLoaded && !fontError) || !ready || auth.loading) return <SafeAreaProvider><View style={{ flex: 1, backgroundColor: C.bg, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: C.text, fontSize: 36, fontFamily: 'Georgia' }}>keyif.</Text><Text style={{ color: C.muted, marginTop: 15 }}>Taşlar hazırlanıyor…</Text></View></SafeAreaProvider>;
-  if (supabaseConfigured && !auth.user) return <SafeAreaProvider><StatusBar style="light" /><AuthScreen auth={auth} /></SafeAreaProvider>;
+  if (!auth.user) return <SafeAreaProvider><StatusBar style="light" /><AuthScreen auth={auth} /></SafeAreaProvider>;
   return <SafeAreaProvider><SafeAreaView style={s.safe} edges={['top', 'bottom', 'left', 'right']}><StatusBar style="light" />
-    {game ? <GameScreen game={game} setGame={setGame} profile={profile} userId={auth.user?.id} remoteGameId={remoteGameId} room={room} round={matchRound} roundCount={game.rules.roundCount} matchScores={matchScores} roundScores={remoteRoundScores ?? undefined} onUpdateProfile={update} onExit={exit} onHelp={() => setModal('help')} onReplay={nextRound} paused={false} playerSeat={onlineSeat ?? 0} onRemoteAction={onlineActive ? (action, payload) => onlineRef.current?.send(action, payload) : undefined} onlineRoomId={onlineActive ? onlineRoomId : undefined} onlineStarted={onlineStarted} onlinePlayers={onlinePlayers} onlineCountdownEndsAt={onlineCountdownEndsAt} onlineStartingUntil={onlineStartingUntil} onlineResultUntil={onlineResultUntil} /> : <View style={{ flex: 1, flexDirection: 'row' }}>
+    {game ? <GameScreen game={game} setGame={setGame} profile={profile} userId={auth.user?.id} remoteGameId={remoteGameId} room={room} round={matchRound} roundCount={game.rules.roundCount} matchScores={matchScores} roundScores={remoteRoundScores ?? undefined} onUpdateProfile={update} onExit={exit} onHelp={() => setModal('help')} onReplay={nextRound} paused={false} playerSeat={onlineSeat ?? 0} onRemoteAction={onlineActive ? (action, payload) => onlineRef.current?.send(action, payload) : undefined} onCallBot={onlineActive ? () => onlineRef.current?.callBot() : undefined} onlineRoomId={onlineActive ? onlineRoomId : undefined} onlineStarted={onlineStarted} onlinePlayers={onlinePlayers} onlineHasBot={onlineHasBot} onlineCountdownEndsAt={onlineCountdownEndsAt} onlineStartingUntil={onlineStartingUntil} onlineResultUntil={onlineResultUntil} /> : <View style={{ flex: 1, flexDirection: 'row' }}>
       <View style={s.sidebar}><View style={{ paddingLeft: 8, marginBottom: 49 }}><Logo /></View><Label style={{ paddingLeft: 17, marginBottom: 16, fontSize: 8 }} color="#8fa596">OYUN ALANI</Label><View style={{ gap: 8 }}>{NAV.map(item => { const Icon = item.icon; return <Pressable key={item.page} accessibilityRole="button" accessibilityState={{ selected: page === item.page }} onPress={() => navigate(item.page)} style={({ hovered, pressed }: { hovered?: boolean; pressed: boolean }) => [s.navItem, page === item.page && s.navActive, hovered && page !== item.page && { backgroundColor: '#ffffff05' }, pressed && { opacity: .7 }]}><Icon size={19} strokeWidth={1.7} color={page === item.page ? C.green : C.muted} /><Text style={[s.navText, page === item.page && { color: C.green }]}>{item.title}</Text>{page === item.page && <View style={{ width: 5, height: 5, backgroundColor: C.green, borderRadius: 5, marginLeft: 'auto' }} />}</Pressable>; })}</View>
         <View style={s.sideCard}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}><Coffee size={20} strokeWidth={1.4} color={C.gold} /><Text style={{ color: C.text, fontFamily: F.serif, fontSize: 20 }}>Senin masan.</Text></View><Text style={{ color: C.muted, fontFamily: F.regular, fontSize: 11, lineHeight: 19, marginTop: 12, marginBottom: 18 }}>Kuralları sen seç,{ '\n' }biz taşları dağıtalım.</Text><Button onPress={() => { setCustomTheme(profile.theme); setModal('custom'); }} secondary compact icon={<Plus size={15} color={C.text} />}>Masa oluştur</Button></View>
         <View style={{ marginTop: 'auto', gap: 3 }}><Pressable accessibilityRole="button" onPress={() => navigate('rules')} style={s.navItem}><CircleHelp size={18} color={C.muted} /><Text style={s.navText}>Nasıl oynanır?</Text></Pressable><Pressable accessibilityRole="button" onPress={() => navigate('settings')} style={s.navItem}><Settings size={18} color={C.muted} /><Text style={s.navText}>Ayarlar</Text></Pressable></View><View style={s.sideFooter}><View style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: C.green }} /><Text style={{ color: '#92ab9a', fontSize: 9, fontFamily: F.medium }}>Keyif her zaman yanında.</Text></View>

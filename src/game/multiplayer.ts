@@ -1,6 +1,6 @@
 import type { Game, Mode } from './engine';
 
-type ServerState = { type: 'state'; roomId: string; seat: number; players: { seat: number }[]; started: boolean; countdownEndsAt: number | null; startingUntil: number | null; resultUntil: number | null; game: Game; scoreSnapshot: number[] };
+type ServerState = { type: 'state'; roomId: string; seat: number; players: { seat: number; isBot?: boolean; name?: string }[]; started: boolean; countdownEndsAt: number | null; startingUntil: number | null; resultUntil: number | null; game: Game; scoreSnapshot: number[] };
 type ServerReady = { type: 'ready'; roomId: string; seat: number };
 type ConnectOptions = {
   mode: Mode;
@@ -19,6 +19,7 @@ export class GameConnection {
   send(action: string, payload: Record<string, unknown> = {}) {
     if (this.socket.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ type: 'action', action, payload }));
   }
+  callBot() { if (this.socket.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ type: 'bot' })); }
   close() { this.socket.close(); }
 }
 
