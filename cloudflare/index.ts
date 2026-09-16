@@ -45,6 +45,7 @@ type RoomState = {
   started?: boolean;
   countdownEndsAt?: number;
   startingUntil?: number;
+  resultUntil?: number;
   reservations: Record<string, Reservation>;
   lastActivity: number;
   sequence: number;
@@ -141,7 +142,7 @@ export class RoomDurableObject implements DurableObject {
     const players = this.players().map(player => ({ seat: player.seat }));
     for (const socket of this.ctx.getWebSockets()) {
       const player = (socket as HibernatedWebSocket).deserializeAttachment();
-      if (player) send(socket, { type: 'state', roomId: state.roomId, seat: player.seat, players, started: this.isStarted(state), countdownEndsAt: state.countdownEndsAt ?? null, startingUntil: state.startingUntil ?? null, game: hiddenGame(state.game, player.seat), scoreSnapshot: scores(state.game) });
+      if (player) send(socket, { type: 'state', roomId: state.roomId, seat: player.seat, players, started: this.isStarted(state), countdownEndsAt: state.countdownEndsAt ?? null, startingUntil: state.startingUntil ?? null, resultUntil: state.resultUntil ?? null, game: hiddenGame(state.game, player.seat), scoreSnapshot: scores(state.game) });
     }
   }
   private async authenticate(message: ClientMessage) {
@@ -181,7 +182,12 @@ export class RoomDurableObject implements DurableObject {
     }
   }
   private async schedule(state: RoomState) {
-    if (!state.game || state.game.ended) return;
+    if (!state.game) return;
+    if (state.game.ended) {
+      if (!state.resultUntil) { state.resultUntil = Date.now() + 5_000; await this.save(state); this.broadcast(state); }
+      await this.ctx.storage.setAlarm(Date.now() + Math.max(100, state.resultUntil - Date.now()));
+      return;
+    }
     if (!this.isStarted(state)) {
       const until = state.startingUntil ?? state.countdownEndsAt;
       if (until) await this.ctx.storage.setAlarm(Math.max(Date.now() + 100, until));
@@ -192,7 +198,21 @@ export class RoomDurableObject implements DurableObject {
   }
   async alarm() {
     const state = await this.load();
-    if (!state.game || state.game.ended) return;
+    if (!state.game) return;
+    if (state.game.ended) {
+      if (!state.resultUntil) state.resultUntil = Date.now() + 5_000;
+      if (Date.now() < state.resultUntil) return this.schedule(state);
+      state.resultUntil = undefined;
+      state.game = newGame(state.game.mode);
+      state.roundSaved = false;
+      state.started = false;
+      state.countdownEndsAt = this.players().length === MAX_PLAYERS ? Date.now() + 10_000 : undefined;
+      state.startingUntil = undefined;
+      await this.save(state);
+      this.broadcast(state);
+      await this.persistence(state);
+      return this.schedule(state);
+    }
     if (!this.isStarted(state)) {
       if (this.players().length < MAX_PLAYERS) { state.countdownEndsAt = undefined; state.startingUntil = undefined; await this.save(state); this.broadcast(state); return; }
       if (state.countdownEndsAt && Date.now() >= state.countdownEndsAt) { state.countdownEndsAt = undefined; state.startingUntil = Date.now() + 1000; await this.save(state); this.broadcast(state); return this.schedule(state); }
@@ -250,6 +270,7 @@ export class RoomDurableObject implements DurableObject {
         state.started = false;
         state.countdownEndsAt = undefined;
         state.startingUntil = undefined;
+        state.resultUntil = undefined;
         state.reservations = {};
         const player: PlayerAttachment = { userId: identity, seat: 0, timestamps: [] };
         socket.serializeAttachment(player);
@@ -272,8 +293,9 @@ export class RoomDurableObject implements DurableObject {
       const player: PlayerAttachment = { userId: identity, seat, timestamps: [] };
       socket.serializeAttachment(player);
       if (activePlayers.length + 1 === MAX_PLAYERS) {
-        state.started = true;
-        state.game.turnStartedAt = Date.now();
+        state.started = false;
+        state.startingUntil = undefined;
+        state.countdownEndsAt = Date.now() + 10_000;
       }
       await this.save(state);
       if (state.dbId && this.env.SUPABASE_SERVICE_ROLE_KEY && this.env.SUPABASE_URL) await fetch(`${this.env.SUPABASE_URL}/rest/v1/game_players`, { method: 'POST', headers: { apikey: this.env.SUPABASE_SERVICE_ROLE_KEY, authorization: `Bearer ${this.env.SUPABASE_SERVICE_ROLE_KEY}`, 'content-type': 'application/json' }, body: JSON.stringify({ game_id: state.dbId, player_id: identity, seat }) });
@@ -304,6 +326,10 @@ export class RoomDurableObject implements DurableObject {
     if (!player) return;
     const state = await this.load();
     state.reservations[player.userId] = { seat: player.seat, expiresAt: Date.now() + RESERVATION_TTL_MS };
+    if (!state.started && this.players().length < MAX_PLAYERS) {
+      state.countdownEndsAt = undefined;
+      state.startingUntil = undefined;
+    }
     await this.save(state);
     this.broadcast(state);
     await this.schedule(state);

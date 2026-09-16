@@ -6,7 +6,7 @@ import { collectMelds, discard, draw, extendMeld, newGame, openMelds, rearrangeT
 type ClientMessage = { type: 'create' | 'join' | 'action' | 'ping'; roomId?: string; accessToken?: string; userId?: string; mode?: Mode; action?: string; payload?: Record<string, unknown> };
 type Player = { ws: WebSocket; userId: string; seat: number };
 type Reservation = { seat: number; expiresAt: number };
-type Room = { id: string; game: Game; started: boolean; countdownEndsAt?: number; startingUntil?: number; players: Map<WebSocket, Player>; reserved: Map<string, Reservation>; lastActivity: number; sequence: number; dbId?: string; roundSaved?: boolean; timer?: NodeJS.Timeout };
+type Room = { id: string; game: Game; started: boolean; countdownEndsAt?: number; startingUntil?: number; resultUntil?: number; players: Map<WebSocket, Player>; reserved: Map<string, Reservation>; lastActivity: number; sequence: number; dbId?: string; roundSaved?: boolean; timer?: NodeJS.Timeout };
 type ClientMeta = { ip: string; timestamps: number[] };
 
 const port = Number(process.env.GAME_WS_PORT ?? 8787);
@@ -38,7 +38,7 @@ function hiddenGame(game: Game, seat: number): Game {
 }
 function broadcast(room: Room) {
   const players = playersFor(room);
-  for (const player of room.players.values()) send(player.ws, { type: 'state', roomId: room.id, seat: player.seat, players, started: room.started, countdownEndsAt: room.countdownEndsAt ?? null, startingUntil: room.startingUntil ?? null, game: hiddenGame(room.game, player.seat), scoreSnapshot: scores(room.game) });
+  for (const player of room.players.values()) send(player.ws, { type: 'state', roomId: room.id, seat: player.seat, players, started: room.started, countdownEndsAt: room.countdownEndsAt ?? null, startingUntil: room.startingUntil ?? null, resultUntil: room.resultUntil ?? null, game: hiddenGame(room.game, player.seat), scoreSnapshot: scores(room.game) });
 }
 async function persistRoom(room: Room, actor?: Player, action?: string, payload: Record<string, unknown> = {}) {
   if (!adminClient || !room.dbId) return;
@@ -62,7 +62,23 @@ async function createPersistentRoom(room: Room, host: Player) {
 function clearRoomTimer(room: Room) { if (room.timer) clearTimeout(room.timer); room.timer = undefined; }
 function scheduleRoom(room: Room) {
   clearRoomTimer(room);
-  if (room.game.ended) return;
+  if (room.game.ended) {
+    const firstResultState = !room.resultUntil;
+    room.resultUntil ??= Date.now() + 5_000;
+    if (firstResultState) broadcast(room);
+    room.timer = setTimeout(() => {
+      room.resultUntil = undefined;
+      room.game = newGame(room.game.mode);
+      room.roundSaved = false;
+      room.started = false;
+      room.startingUntil = undefined;
+      room.countdownEndsAt = room.players.size === 4 ? Date.now() + 10_000 : undefined;
+      broadcast(room);
+      void persistRoom(room);
+      scheduleRoom(room);
+    }, Math.max(100, room.resultUntil - Date.now()));
+    return;
+  }
   if (!room.started) {
     if (!room.countdownEndsAt && !room.startingUntil) return;
     const until = room.startingUntil ?? room.countdownEndsAt!;
