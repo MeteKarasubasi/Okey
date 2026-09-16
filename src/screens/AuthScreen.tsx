@@ -7,7 +7,7 @@ import type { useAuth } from '../auth';
 
 type Auth = ReturnType<typeof useAuth>;
 export default function AuthScreen({ auth }: { auth: Auth }) {
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [mode, setMode] = useState<'signin' | 'signup'>('signup');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
