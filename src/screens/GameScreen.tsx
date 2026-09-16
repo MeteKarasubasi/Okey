@@ -100,6 +100,8 @@ export default function GameScreen({ game, setGame, profile, userId, remoteGameI
   const preOpenSlots = useRef<RackSlots | null>(null);
   const previousOpened = useRef(game.opened[seat]);
   const hand = game.hands[seat], myTurn = game.turn === seat && !game.ended && (!onlineRoomId || onlineStarted);
+  const waitingForStart = Boolean(onlineRoomId && !onlineStarted && !game.ended);
+  const rackVisible = !waitingForStart;
   const occupied = (targetSeat: number) => !onlineRoomId || onlinePlayers.some(player => player.seat === targetSeat);
   const realPlayerCount = onlinePlayers.filter(player => !player.isBot).length;
   const botPlayerCount = onlinePlayers.filter(player => player.isBot).length;
@@ -256,20 +258,22 @@ export default function GameScreen({ game, setGame, profile, userId, remoteGameI
       <DiscardSlot x={28} y={548} tile={previousDiscard} label="Yandan al" disabled={Boolean(game.discardLockedTileId && previousDiscard?.id === game.discardLockedTileId)} testID="draw-discard" onPress={() => run(g => draw(g, 'discard'))} />
       <DrawTile tile={canDraw && previousDiscard && previousDiscard.id !== game.discardLockedTileId ? previousDiscard : undefined} indicator={game.indicator} source={{ x: 28, y: 548, width: 72, height: 96 }} scale={scale} disabled={!canDraw || !previousDiscard || previousDiscard.id === game.discardLockedTileId} reducedMotion={reducedMotion} onStart={touch} onMove={() => {}} onDrop={(point, tapped) => dropDrawnTile(point, tapped, 28, 548)} onFinish={finishDiscardDraw} />
       <DiscardSlot x={DISCARD.x} y={DISCARD.y} tile={game.discards[0].at(-1)} label="Buraya at" highlighted={hoverDiscard} testID="discard-target" />
-      <View style={s.actions}>
+      {!waitingForStart && <View style={s.actions}>
         <BevelButton label="SERİ AÇ" tone="ivory" testID="open-melds" onPress={() => run(g => openMelds(g, melds), 'OPEN', { melds: melds.map(meld => ({ ids: meld.tiles.map(tile => tile.id), kind: meld.kind, score: meld.score })) })} disabled={!myTurn || game.phase !== 'discard'} style={s.meldAction}><SortArt small /></BevelButton>
         <BevelButton label="ÇİFT AÇ" tone="ivory" onPress={() => run(g => openMelds(g, melds), 'OPEN', { melds: melds.map(meld => ({ ids: meld.tiles.map(tile => tile.id), kind: meld.kind, score: meld.score })) })} disabled={!myTurn || game.phase !== 'discard'} style={s.meldAction}><SortArt small pair /></BevelButton>
         <BevelButton label="GERİ TOPLA" tone="ivory" onPress={collectOwnMelds} disabled={!myTurn || game.phase !== 'discard' || !game.opened[seat]} style={s.smallAction} />
         <BevelButton label="TAŞLARI İŞLE" tone="ivory" onPress={() => setGame(g => g ? { ...g, message: 'Istakandan taşı seç, masadaki uygun pere dokun.' } : g)} style={s.smallAction} />
-      </View>
+      </View>}
       <View style={{ position: 'absolute', left: 632, top: 599, width: 350 }}><Player person={seat} name={profile.name} active={myTurn} /></View>
       <Text accessibilityLiveRegion="polite" style={s.message}>{game.message}</Text>
-      <BevelButton label={'ÇİFT\nDİZ'} onPress={() => arrange('number')} style={s.sortLeft}><SortArt pair /></BevelButton>
-      <BevelButton label={'SERİ\nDİZ'} onPress={() => arrange('color')} style={s.sortRight}><SortArt /></BevelButton>
-      <TileRack hand={hand} slots={slots} scale={scale} selected={selected} indicator={game.indicator} disabled={paused || profilePaused || game.ended} reducedMotion={reducedMotion}
-        canDiscard={myTurn && game.phase === 'discard' && !paused} onSelect={id => { setSelected(id === selected ? null : id); touch(); }} onStart={touch} onHoverDiscard={setHoverDiscard}
-        onMoveSlot={(id, slot) => setSlots(previous => moveRackSlot(reconcileRack(previous, hand.map(t => t.id)), id, slot))}
-        onDiscard={id => { setSelected(null); run(g => discard(g, id), 'DISCARD', { tileId: id }); }} />
+      {rackVisible && <>
+        <BevelButton label={'ÇİFT\nDİZ'} onPress={() => arrange('number')} style={s.sortLeft}><SortArt pair /></BevelButton>
+        <BevelButton label={'SERİ\nDİZ'} onPress={() => arrange('color')} style={s.sortRight}><SortArt /></BevelButton>
+        <TileRack hand={hand} slots={slots} scale={scale} selected={selected} indicator={game.indicator} disabled={paused || profilePaused || game.ended} reducedMotion={reducedMotion}
+          canDiscard={myTurn && game.phase === 'discard' && !paused} onSelect={id => { setSelected(id === selected ? null : id); touch(); }} onStart={touch} onHoverDiscard={setHoverDiscard}
+          onMoveSlot={(id, slot) => setSlots(previous => moveRackSlot(reconcileRack(previous, hand.map(t => t.id)), id, slot))}
+          onDiscard={id => { setSelected(null); run(g => discard(g, id), 'DISCARD', { tileId: id }); }} />
+      </>}
       {profileTarget !== null && <View style={s.profileOverlay}>
         <Pressable accessibilityLabel="Profil penceresini kapat" onPress={() => setProfileTarget(null)} style={StyleSheet.absoluteFill} />
         <View style={s.profileCard}>

@@ -34,12 +34,12 @@ function send(ws: WebSocket, message: Record<string, unknown>) { if (ws.readySta
 function fail(ws: WebSocket, message: string) { send(ws, { type: 'error', message }); }
 function playersFor(room: Room) { return [...room.players.values(), ...room.bots].map(player => ({ seat: player.seat, isBot: player.isBot, name: player.name })); }
 function participantCount(room: Room) { return room.players.size + room.bots.length; }
-function hiddenGame(game: Game, seat: number): Game {
-  return { ...game, hands: game.hands.map((hand, index) => index === seat ? hand : hand.map((_, tileIndex) => ({ id: `hidden-${index}-${tileIndex}`, color: 'black', value: 0 }))) };
+function hiddenGame(game: Game, seat: number, revealSeat = true): Game {
+  return { ...game, hands: game.hands.map((hand, index) => index === seat && revealSeat ? hand : hand.map((_, tileIndex) => ({ id: `hidden-${index}-${tileIndex}`, color: 'black', value: 0 }))) };
 }
 function broadcast(room: Room) {
   const players = playersFor(room);
-  for (const player of room.players.values()) if (player.ws) send(player.ws, { type: 'state', roomId: room.id, seat: player.seat, players, started: room.started, countdownEndsAt: room.countdownEndsAt ?? null, startingUntil: room.startingUntil ?? null, resultUntil: room.resultUntil ?? null, game: hiddenGame(room.game, player.seat), scoreSnapshot: scores(room.game) });
+  for (const player of room.players.values()) if (player.ws) send(player.ws, { type: 'state', roomId: room.id, seat: player.seat, players, started: room.started, countdownEndsAt: room.countdownEndsAt ?? null, startingUntil: room.startingUntil ?? null, resultUntil: room.resultUntil ?? null, game: hiddenGame(room.game, player.seat, room.started), scoreSnapshot: scores(room.game) });
 }
 async function persistRoom(room: Room, actor?: Player, action?: string, payload: Record<string, unknown> = {}) {
   if (!adminClient || !room.dbId) return;

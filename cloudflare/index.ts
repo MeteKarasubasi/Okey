@@ -77,8 +77,8 @@ function allowedAction(value: unknown): value is string { return typeof value ==
 function requiredAuth(env: Env) { return env.ENVIRONMENT === 'production' || env.GAME_WS_AUTH_REQUIRED !== 'false'; }
 function origins(env: Env) { return new Set((env.GAME_ALLOWED_ORIGINS ?? '').split(',').map(origin => origin.trim()).filter(Boolean)); }
 
-function hiddenGame(game: Game, seat: number): Game {
-  return { ...game, hands: game.hands.map((hand, index) => index === seat ? hand : hand.map((_, tileIndex) => ({ id: `hidden-${index}-${tileIndex}`, color: 'black', value: 0 }))) };
+function hiddenGame(game: Game, seat: number, revealSeat = true): Game {
+  return { ...game, hands: game.hands.map((hand, index) => index === seat && revealSeat ? hand : hand.map((_, tileIndex) => ({ id: `hidden-${index}-${tileIndex}`, color: 'black', value: 0 }))) };
 }
 function botMove(game: Game, seat: number): Game {
   let next = game;
@@ -163,9 +163,10 @@ export class RoomDurableObject implements DurableObject {
   private broadcast(state: RoomState) {
     if (!state.game) return;
     const players = this.participants(state).map(player => ({ seat: player.seat, isBot: player.isBot, name: player.name }));
+    const started = this.isStarted(state);
     for (const socket of this.ctx.getWebSockets()) {
       const player = (socket as HibernatedWebSocket).deserializeAttachment();
-      if (player) send(socket, { type: 'state', roomId: state.roomId, seat: player.seat, players, started: this.isStarted(state), countdownEndsAt: state.countdownEndsAt ?? null, startingUntil: state.startingUntil ?? null, resultUntil: state.resultUntil ?? null, game: hiddenGame(state.game, player.seat), scoreSnapshot: scores(state.game) });
+      if (player) send(socket, { type: 'state', roomId: state.roomId, seat: player.seat, players, started, countdownEndsAt: state.countdownEndsAt ?? null, startingUntil: state.startingUntil ?? null, resultUntil: state.resultUntil ?? null, game: hiddenGame(state.game, player.seat, started), scoreSnapshot: scores(state.game) });
     }
   }
   private async authenticate(message: ClientMessage) {
