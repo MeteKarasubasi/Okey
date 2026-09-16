@@ -6,7 +6,7 @@ import { collectMelds, discard, draw, extendMeld, newGame, openMelds, rearrangeT
 type ClientMessage = { type: 'create' | 'join' | 'action' | 'ping'; roomId?: string; accessToken?: string; userId?: string; mode?: Mode; action?: string; payload?: Record<string, unknown> };
 type Player = { ws: WebSocket; userId: string; seat: number };
 type Reservation = { seat: number; expiresAt: number };
-type Room = { id: string; game: Game; started: boolean; players: Map<WebSocket, Player>; reserved: Map<string, Reservation>; lastActivity: number; sequence: number; dbId?: string; roundSaved?: boolean; timer?: NodeJS.Timeout };
+type Room = { id: string; game: Game; started: boolean; countdownEndsAt?: number; startingUntil?: number; players: Map<WebSocket, Player>; reserved: Map<string, Reservation>; lastActivity: number; sequence: number; dbId?: string; roundSaved?: boolean; timer?: NodeJS.Timeout };
 type ClientMeta = { ip: string; timestamps: number[] };
 
 const port = Number(process.env.GAME_WS_PORT ?? 8787);
@@ -38,7 +38,7 @@ function hiddenGame(game: Game, seat: number): Game {
 }
 function broadcast(room: Room) {
   const players = playersFor(room);
-  for (const player of room.players.values()) send(player.ws, { type: 'state', roomId: room.id, seat: player.seat, players, started: room.started, game: hiddenGame(room.game, player.seat), scoreSnapshot: scores(room.game) });
+  for (const player of room.players.values()) send(player.ws, { type: 'state', roomId: room.id, seat: player.seat, players, started: room.started, countdownEndsAt: room.countdownEndsAt ?? null, startingUntil: room.startingUntil ?? null, game: hiddenGame(room.game, player.seat), scoreSnapshot: scores(room.game) });
 }
 async function persistRoom(room: Room, actor?: Player, action?: string, payload: Record<string, unknown> = {}) {
   if (!adminClient || !room.dbId) return;
@@ -62,7 +62,19 @@ async function createPersistentRoom(room: Room, host: Player) {
 function clearRoomTimer(room: Room) { if (room.timer) clearTimeout(room.timer); room.timer = undefined; }
 function scheduleRoom(room: Room) {
   clearRoomTimer(room);
-  if (!room.started || room.game.ended) return;
+  if (room.game.ended) return;
+  if (!room.started) {
+    if (!room.countdownEndsAt && !room.startingUntil) return;
+    const until = room.startingUntil ?? room.countdownEndsAt!;
+    room.timer = setTimeout(() => {
+      if (room.players.size < 4) { room.countdownEndsAt = undefined; room.startingUntil = undefined; broadcast(room); return; }
+      if (room.countdownEndsAt) {
+        room.countdownEndsAt = undefined; room.startingUntil = Date.now() + 1000; broadcast(room); scheduleRoom(room); return;
+      }
+      room.startingUntil = undefined; room.started = true; room.game.turnStartedAt = Date.now(); broadcast(room); scheduleRoom(room);
+    }, Math.max(100, until - Date.now()));
+    return;
+  }
   const turn = room.game.turn;
   const wait = Math.max(250, room.game.rules.turnTimeSeconds * 1000 - (Date.now() - room.game.turnStartedAt) + 250);
   room.timer = setTimeout(() => {
@@ -144,7 +156,7 @@ function joinRoom(ws: WebSocket, id: string, userId: string) {
   room.reserved.delete(userId);
   const player = { ws, userId, seat };
   room.players.set(ws, player); roomBySocket.set(ws, room); room.lastActivity = Date.now();
-  if (room.players.size === 4) { room.started = true; room.game.turnStartedAt = Date.now(); }
+  if (!room.started && room.players.size === 4 && !room.countdownEndsAt && !room.startingUntil) room.countdownEndsAt = Date.now() + 10_000;
   if (adminClient && room.dbId) void adminClient.from('game_players').insert({ game_id: room.dbId, player_id: userId, seat });
   send(ws, { type: 'ready', roomId: room.id, seat }); broadcast(room); scheduleRoom(room);
 }
@@ -213,6 +225,7 @@ server.on('connection', (ws, request) => {
     const player = room.players.get(ws);
     room.players.delete(ws); room.lastActivity = Date.now();
     if (player) room.reserved.set(player.userId, { seat: player.seat, expiresAt: Date.now() + reservationTtlMs });
+    if (!room.started && room.players.size < 4) { room.countdownEndsAt = undefined; room.startingUntil = undefined; }
     broadcast(room); scheduleRoom(room);
   });
 });

@@ -43,6 +43,8 @@ type RoomState = {
   roomId: string;
   game?: Game;
   started?: boolean;
+  countdownEndsAt?: number;
+  startingUntil?: number;
   reservations: Record<string, Reservation>;
   lastActivity: number;
   sequence: number;
@@ -133,13 +135,13 @@ export class RoomDurableObject implements DurableObject {
   private players() {
     return this.ctx.getWebSockets().map(socket => (socket as HibernatedWebSocket).deserializeAttachment()).filter((player): player is PlayerAttachment => Boolean(player));
   }
-  private isStarted(state: RoomState) { return state.started === true || Boolean(state.game && this.players().length === MAX_PLAYERS); }
+  private isStarted(state: RoomState) { return state.started === true || Boolean(state.game && !state.countdownEndsAt && !state.startingUntil && this.players().length === MAX_PLAYERS); }
   private broadcast(state: RoomState) {
     if (!state.game) return;
     const players = this.players().map(player => ({ seat: player.seat }));
     for (const socket of this.ctx.getWebSockets()) {
       const player = (socket as HibernatedWebSocket).deserializeAttachment();
-      if (player) send(socket, { type: 'state', roomId: state.roomId, seat: player.seat, players, started: this.isStarted(state), game: hiddenGame(state.game, player.seat), scoreSnapshot: scores(state.game) });
+      if (player) send(socket, { type: 'state', roomId: state.roomId, seat: player.seat, players, started: this.isStarted(state), countdownEndsAt: state.countdownEndsAt ?? null, startingUntil: state.startingUntil ?? null, game: hiddenGame(state.game, player.seat), scoreSnapshot: scores(state.game) });
     }
   }
   private async authenticate(message: ClientMessage) {
@@ -179,13 +181,25 @@ export class RoomDurableObject implements DurableObject {
     }
   }
   private async schedule(state: RoomState) {
-    if (!this.isStarted(state) || !state.game || state.game.ended) return;
+    if (!state.game || state.game.ended) return;
+    if (!this.isStarted(state)) {
+      const until = state.startingUntil ?? state.countdownEndsAt;
+      if (until) await this.ctx.storage.setAlarm(Math.max(Date.now() + 100, until));
+      return;
+    }
     const wait = Math.max(250, state.game.rules.turnTimeSeconds * 1000 - (Date.now() - state.game.turnStartedAt) + 250);
     await this.ctx.storage.setAlarm(Date.now() + wait);
   }
   async alarm() {
     const state = await this.load();
-    if (!this.isStarted(state) || !state.game || state.game.ended) return;
+    if (!state.game || state.game.ended) return;
+    if (!this.isStarted(state)) {
+      if (this.players().length < MAX_PLAYERS) { state.countdownEndsAt = undefined; state.startingUntil = undefined; await this.save(state); this.broadcast(state); return; }
+      if (state.countdownEndsAt && Date.now() >= state.countdownEndsAt) { state.countdownEndsAt = undefined; state.startingUntil = Date.now() + 1000; await this.save(state); this.broadcast(state); return this.schedule(state); }
+      if (state.startingUntil && Date.now() >= state.startingUntil) { state.startingUntil = undefined; state.started = true; state.game.turnStartedAt = Date.now(); await this.save(state); this.broadcast(state); return this.schedule(state); }
+      return this.schedule(state);
+      return;
+    }
     const turn = state.game.turn;
     const deadlinePassed = Date.now() - state.game.turnStartedAt >= state.game.rules.turnTimeSeconds * 1000;
     if (state.game.turn !== turn || !deadlinePassed) return this.schedule(state);
@@ -234,6 +248,8 @@ export class RoomDurableObject implements DurableObject {
         state.roomId = this.roomId || roomId();
         state.game = newGame(message.mode === 'pairs' ? 'pairs' : 'classic');
         state.started = false;
+        state.countdownEndsAt = undefined;
+        state.startingUntil = undefined;
         state.reservations = {};
         const player: PlayerAttachment = { userId: identity, seat: 0, timestamps: [] };
         socket.serializeAttachment(player);
@@ -267,7 +283,7 @@ export class RoomDurableObject implements DurableObject {
     }
     if (message.type !== 'action') return error(socket, 'Bilinmeyen mesaj türü.');
     if (!state.game) return error(socket, 'Önce bir canlı odaya katılmalısın.');
-    if (!this.isStarted(state)) return error(socket, 'Masa dört gerçek oyuncunun katılmasını bekliyor.');
+      if (!this.isStarted(state)) return error(socket, state.countdownEndsAt || state.startingUntil ? 'Oyun başlamak üzere. Lütfen bekle.' : 'Masa dört gerçek oyuncunun katılmasını bekliyor.');
     const action = current;
     if (!allowedAction(message.action)) return error(socket, 'Geçersiz hamle türü.');
     const payload = message.payload && typeof message.payload === 'object' && !Array.isArray(message.payload) ? message.payload : {};
